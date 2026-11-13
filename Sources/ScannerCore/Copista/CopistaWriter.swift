@@ -1,0 +1,1343 @@
+import Foundation
+
+// copisteria's writer (write.py): a page's reading -> MusicXML. Transcription only: every decision was the model's.
+// Without OCR text boxes (the app reads none yet): no part names from labels, words or multi-rest counts.
+
+extension Copista {
+  /// A MusicXML element that keeps its attributes in the order they were set (as ElementTree does).
+  final class XE {
+    let tag: String
+    var attrs: [(String, String)] = []
+    var text: String?
+    var children: [XE] = []
+    init(_ tag: String, _ text: String? = nil, _ attrs: [(String, String)] = []) {
+      self.tag = tag; self.text = text; self.attrs = attrs
+    }
+    @discardableResult func sub(_ tag: String, _ text: Any? = nil, _ attrs: [(String, Any)] = []) -> XE {
+      let e = XE(tag, text.map { "\($0)" }, attrs.map { ($0.0, "\($0.1)") })
+      children.append(e)
+      return e
+    }
+    func set(_ k: String, _ v: String) { attrs.append((k, v)) }
+    func render(_ indent: Int = 0, into out: inout String) {
+      func esc(_ s: String, attr: Bool) -> String {
+        var r = s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+          .replacingOccurrences(of: ">", with: "&gt;")
+        if attr { r = r.replacingOccurrences(of: "\"", with: "&quot;") }
+        return r
+      }
+      let pad = String(repeating: "  ", count: indent)
+      out += pad + "<" + tag + attrs.map { " \($0.0)=\"\(esc($0.1, attr: true))\"" }.joined()
+      if children.isEmpty {
+        if let text { out += ">" + esc(text, attr: false) + "</" + tag + ">\n" } else { out += " />\n" }
+        return
+      }
+      out += ">" + (text.map { esc($0, attr: false) } ?? "") + "\n"
+      for c in children { c.render(indent + 1, into: &out) }
+      out += pad + "</" + tag + ">\n"
+    }
+  }
+
+  final class Event {
+    var x: Double
+    var kind: String
+    var typ = "quarter", dots = 0, voice = 1, chord = false, grace = "none", tup = "none"
+    var step = "C", octave = 4, alter = 0
+    var tie = false, tieStop = false, unpitched = false
+    var marks: [String] = []
+    var dur = Q(1)
+    var si = -1
+    var tupletMark = "", accidental = "", stem = ""
+    var beams: [(Int, String)] = []
+    var slurs: [(String, Int)] = []
+    var arpeggiate = false
+    var pre: [Dir] = [], post: [Dir] = []
+    var copied = false
+    var onset: Double?
+    var onsetP = 0.0
+    var dist: (beat: [Double], frac: [Double], tup: [Double]?)?
+
+    init(x: Double, kind: String) { self.x = x; self.kind = kind }
+
+    func copy() -> Event {
+      let e = Event(x: x, kind: kind)
+      e.typ = typ; e.dots = dots; e.voice = voice; e.chord = chord; e.grace = grace; e.tup = tup
+      e.step = step; e.octave = octave; e.alter = alter; e.unpitched = unpitched; e.dur = dur; e.si = si
+      e.tupletMark = tupletMark; e.accidental = accidental; e.stem = stem; e.arpeggiate = arpeggiate
+      e.onset = onset; e.onsetP = onsetP; e.dist = dist
+      return e
+    }
+  }
+
+  /// A direction: dynamics, wedge, octave shift, pedal, segno / coda, clef change.
+  struct Dir {
+    var x: Double
+    var kind: String
+    var payload: String
+    var size = 0
+    var below = false
+  }
+
+  struct Marks {
+    var left: String?
+    var right: String?
+    var endings: [String] = []
+    var multirest: Int?
+    var repeatBar = false
+    var endClef: String?
+    var meter = false
+  }
+
+  struct BarState: Equatable { var key = 0; var time = "4/4"; var clef = "G2" }
+
+  /// Voices of a bar, in the order they first appear.
+  struct Voices {
+    var order: [Int] = []
+    var map: [Int: [Event]] = [:]
+    subscript(v: Int) -> [Event]? {
+      get { map[v] }
+      set {
+        if map[v] == nil, newValue != nil { order.append(v) }
+        map[v] = newValue
+      }
+    }
+    var values: [[Event]] { order.map { map[$0]! } }
+    var isEmpty: Bool { order.isEmpty }
+  }
+
+  final class StaffBar {
+    let staff: Int, bar: Int
+    var voices: Voices
+    var dirs: [Dir]
+    var marks: Marks
+    let state: BarState
+    init(staff: Int, bar: Int, voices: Voices, dirs: [Dir], marks: Marks, state: BarState) {
+      self.staff = staff; self.bar = bar; self.voices = voices; self.dirs = dirs; self.marks = marks; self.state = state
+    }
+  }
+
+  enum Writer {
+    static let real = 0.5, onsetP = 0.6
+    static let steps = Array("CDEFGAB").map(String.init)
+    static let midLine: [String: Int] = [
+      "G2": 34, "G1": 36, "F4": 22, "F3": 24, "F5": 20, "C1": 32, "C2": 30, "C3": 28, "C4": 26, "C5": 24,
+      "G2_8b": 27, "G2_8a": 41, "G2_15b": 20, "G2_15a": 48, "F4_8b": 15, "F4_8a": 29, "F4_15b": 8, "F4_15a": 36,
+      "perc": 34, "other": 34]
+    static let clefXML: [String: (String, Int?, Int)] = [
+      "G2": ("G", 2, 0), "G1": ("G", 1, 0), "F4": ("F", 4, 0), "F3": ("F", 3, 0), "F5": ("F", 5, 0),
+      "C1": ("C", 1, 0), "C2": ("C", 2, 0), "C3": ("C", 3, 0), "C4": ("C", 4, 0), "C5": ("C", 5, 0),
+      "G2_8b": ("G", 2, -1), "G2_8a": ("G", 2, 1), "G2_15b": ("G", 2, -2), "G2_15a": ("G", 2, 2),
+      "F4_8b": ("F", 4, -1), "F4_8a": ("F", 4, 1), "F4_15b": ("F", 4, -2), "F4_15a": ("F", 4, 2),
+      "perc": ("percussion", nil, 0), "other": ("G", 2, 0)]
+    static let dyn: Set<String> = ["p", "pp", "ppp", "pppp", "ppppp", "mp", "mf", "f", "ff", "fff", "ffff", "fffff", "fp",
+                                   "fz", "sf", "sfz", "sffz", "sfp", "sfpp", "rf", "rfz", "pf"]
+    static let artic: [(String, String)] = [("artic_stacc", "staccato"), ("artic_acc", "accent"), ("artic_ten", "tenuto"),
+                                            ("artic_marc", "strong-accent"), ("artic_stacciss", "staccatissimo"),
+                                            ("artic_acc-soft", "soft-accent")]
+    static let tech: [(String, String)] = [("artic_upbow", "up-bow"), ("artic_dnbow", "down-bow"), ("artic_harm", "harmonic"),
+                                           ("artic_open", "open-string"), ("artic_stop", "stopped"), ("artic_snap", "snap-pizzicato")]
+    static let accidXML: [String: String] = ["sharp": "sharp", "flat": "flat", "natural": "natural", "dsharp": "double-sharp",
+                                             "dflat": "flat-flat", "natsharp": "natural-sharp", "natflat": "natural-flat"]
+    static let accidAlter: [String: Int] = ["sharp": 1, "flat": -1, "natural": 0, "dsharp": 2, "dflat": -2, "natsharp": 1, "natflat": -1]
+    static let ornament: [(String, String)] = [("trill", "trill-mark"), ("mordent", "mordent")]
+    static let afterMark: [(String, String)] = [("breath", "breath-mark"), ("caesura", "caesura")]
+    static let octave: [String: (Int, String, Int)] = ["octave_8a": (1, "down", 8), "octave_8b": (-1, "up", 8),
+                                                        "octave_15a": (2, "down", 15), "octave_15b": (-2, "up", 15)]
+    static let beamLevel: [String: Int] = ["eighth": 1, "16th": 2, "32nd": 3, "64th": 4, "128th": 5]
+    static let barRight: [String: String] = ["barLine_double": "light-light", "barLine_final": "light-heavy",
+                                             "barLine_repeat_end": "light-heavy", "barLine_dashed": "dashed", "barLine_dotted": "dotted"]
+    static let shortRight: Set<String> = ["barLine_final", "barLine_repeat_end"]
+    static let accAnchor: [String: Double] = ["flat": 0.46, "dflat": 0.46, "natflat": 0.46]
+    static let alterKeepP = 0.97
+    static let alignBrace = 2.0, alignClef = 1.0, alignShift = 0.01
+    static let tieRise = 2.0, tieFar = 6.0, beamReach = 0.7
+    static let gapLogp = log(0.02), overlapLogp = log(0.02), sameOnsetLogp = log(0.05), pastBarLogp = log(0.01)
+    static let endGapLogp = log(0.02)
+    static let meterLengths = 6
+    static let barVoteFloor = log(0.01)
+
+    static func lookup(_ table: [(String, String)], _ k: String) -> String? { table.first { $0.0 == k }?.1 }
+
+    static func floorDiv(_ a: Int, _ b: Int) -> Int { Int((Double(a) / Double(b)).rounded(.down)) }
+    static func floorMod(_ a: Int, _ b: Int) -> Int { a - floorDiv(a, b) * b }
+
+    static func pitch(_ clef: String, _ pos: Int) -> (String, Int) {
+      let idx = (midLine[clef] ?? 34) + pos
+      return (steps[floorMod(idx, 7)], floorDiv(idx, 7))
+    }
+
+    static func clefOfCls(_ cls: String) -> String {
+      let name = String(cls.dropFirst("clef_".count))
+      return midLine[name] != nil ? name : (name == "perc" ? "perc" : "other")
+    }
+
+    static func timeLen(_ t: String) -> Q {
+      guard t != "other", t.contains("/") else { return Q(4) }
+      let p = t.split(separator: "/").map { Int($0)! }
+      return Q(p[0] * 4, p[1])
+    }
+
+    // MARK: parts
+    static func isReal(_ rd: Reading, _ si: Int) -> Bool { (rd.tok[si]?.realP ?? 0) >= real }
+    static func cls(_ rd: Reading, _ si: Int) -> String { rd.classes[rd.tok[si]!.cls] }
+
+    static func covered(_ L: Layout, _ box: Box, _ ks: [Int]) -> [Int] {
+      ks.indices.filter { p in
+        let st = L.staves[ks[p]]
+        return box.1 - st.sp <= st.mid && st.mid <= box.3 + st.sp
+      }
+    }
+
+    static func fullest(_ L: Layout) -> System {
+      var t = L.systems[0]
+      for sy in L.systems.dropFirst() where sy.staves.count > t.staves.count { t = sy }
+      return t
+    }
+
+    static func planParts(_ rd: Reading) -> [[Int]] {
+      let L = rd.layout
+      guard !L.systems.isEmpty else { return [] }
+      let tmpl = fullest(L)
+      let K = tmpl.staves.count
+      var taken = [Bool](repeating: false, count: K)
+      var plans: [[Int]] = []
+      for (si, s) in L.syms.enumerated() where isReal(rd, si) && cls(rd, si) == "grpSym_brace" {
+        let cov = covered(L, s.box, tmpl.staves)
+        if cov.count == 2 && cov[1] == cov[0] + 1 && !cov.contains(where: { taken[$0] }) {
+          for p in cov { taken[p] = true }
+          plans.append(cov)
+        }
+      }
+      for p in 0..<K where !taken[p] { plans.append([p]) }
+      return Front.stableSorted(plans) { $0[0] < $1[0] }
+    }
+
+    static func bracedPairs(_ L: Layout, _ sy: System, _ braces: [Sym]) -> Set<Int> {
+      var out = Set<Int>()
+      for s in braces {
+        let cov = covered(L, s.box, sy.staves)
+        if cov.count == 2 && cov[1] == cov[0] + 1 { out.insert(cov[0]) }
+      }
+      return out
+    }
+
+    static func openingClef(_ rd: Reading, _ k: Int) -> String? {
+      let bars = rd.layout.staves[k].bars
+      guard let b = bars.first, let r = rd.tok[b], r.hasBarHeads else { return nil }
+      return r.clef
+    }
+
+    /// Per system: place (in the fullest system) -> staff.
+    static func alignSystems(_ rd: Reading, _ plans: [[Int]]) -> [[Int: Int]] {
+      let L = rd.layout
+      guard !L.systems.isEmpty else { return [] }
+      let tmpl = fullest(L)
+      let K = tmpl.staves.count
+      let pair = Set(plans.filter { $0.count == 2 }.map { $0[0] })
+      let braces = L.syms.filter { isReal(rd, $0.i) && cls(rd, $0.i) == "grpSym_brace" }
+      let tClef = tmpl.staves.map { openingClef(rd, $0) }
+      var out: [[Int: Int]] = []
+      for sy in L.systems {
+        let n = sy.staves.count
+        func identity() -> [Int: Int] { Dictionary(uniqueKeysWithValues: sy.staves.enumerated().map { ($0.offset, $0.element) }) }
+        if n == K { out.append(identity()); continue }
+        let own = bracedPairs(L, sy, braces)
+        if !own.isEmpty && pair.isEmpty { out.append(identity()); continue }
+        let clefs = sy.staves.map { openingClef(rd, $0) }
+        func unary(_ i: Int, _ p: Int) -> Double {
+          var v = -alignShift * Double(abs(p - i))
+          if let c = clefs[i], let t = tClef[p] { v += c == t ? alignClef : -alignClef }
+          return v
+        }
+        func link(_ i: Int, _ q: Int, _ p: Int) -> Double {
+          var v = 0.0
+          if own.contains(i - 1) && p != q + 1 { v -= alignBrace } else if own.contains(i - 1) && pair.contains(q) { v += alignBrace }
+          if pair.contains(q) && p != q + 1 { v -= alignBrace }
+          if pair.contains(p - 1) && q != p - 1 { v -= alignBrace }
+          return v
+        }
+        var best = [[Double]](repeating: [Double](repeating: -.infinity, count: K), count: n)
+        var back = [[Int]](repeating: [Int](repeating: -1, count: K), count: n)
+        for p in 0...(K - n) { best[0][p] = unary(0, p) - (pair.contains(p - 1) ? alignBrace : 0) }
+        if n > 1 {
+          for i in 1..<n {
+            for p in i...(K - n + i) {
+              for q in (i - 1)..<p {
+                let v = best[i - 1][q] + link(i, q, p)
+                if v > best[i][p] { best[i][p] = v; back[i][p] = q }
+              }
+              best[i][p] += unary(i, p)
+            }
+          }
+        }
+        var p = n - 1
+        for c in (n - 1)..<K where best[n - 1][c] - (pair.contains(c) ? alignBrace : 0) > best[n - 1][p] - (pair.contains(p) ? alignBrace : 0) { p = c }
+        var places = [p]
+        if n > 1 { for i in stride(from: n - 1, to: 0, by: -1) { p = back[i][p]; places.append(p) } }
+        var at: [Int: Int] = [:]
+        for (pl, k) in zip(places.reversed(), sy.staves) { at[pl] = k }
+        out.append(at)
+      }
+      return out
+    }
+
+    static func partGroups(_ rd: Reading, _ plans: [[Int]]) -> [(Int, Int, String)] {
+      let L = rd.layout
+      guard !L.systems.isEmpty, plans.count >= 2 else { return [] }
+      let tmpl = fullest(L)
+      var partOf: [Int: Int] = [:]
+      for (n, pl) in plans.enumerated() { for p in pl { partOf[p] = n } }
+      var out: [(Int, Int, String)] = []
+      for s in L.syms where isReal(rd, s.i) {
+        let c = cls(rd, s.i)
+        guard c == "grpSym_bracket" || c == "grpSym_brace" else { continue }
+        let cov = Array(Set(covered(L, s.box, tmpl.staves).compactMap { partOf[$0] })).sorted()
+        if cov.count >= 2 && !out.contains(where: { $0.0 == cov[0] && $0.1 == cov[cov.count - 1] }) {
+          out.append((cov[0], cov[cov.count - 1], s.cls.hasSuffix("bracket") ? "bracket" : "brace"))
+        }
+      }
+      return out
+    }
+
+    static func barState(_ rd: Reading, _ staff: Int, _ bar: Int, _ prev: BarState) -> BarState {
+      var state = prev
+      if let r = rd.tok[rd.layout.staves[staff].bars[bar]], r.hasBarHeads {
+        if let k = r.key { state.key = k }
+        if let t = r.time { state.time = t }
+        if let c = r.clef { state.clef = c }
+      }
+      return state
+    }
+
+    // MARK: a bar's events
+    static func events(_ rd: Reading, _ staff: Int, _ bar: Int, clef: String, key: Int) -> ([Event], [Dir], Marks) {
+      let L = rd.layout
+      let st = L.staves[staff], sp = st.sp
+      let syms = Front.stableSorted(L.syms.filter { $0.staff == staff && $0.bar == bar && isReal(rd, $0.i) && $0.fam != "measure" }) { $0.cx < $1.cx }
+      let clefChanges = syms.filter { family(cls(rd, $0.i)) == "clef" }.map { ($0.cx, clefOfCls(cls(rd, $0.i))) }
+        .sorted { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }
+      let notesX = syms.filter { ["note", "rest"].contains(family(cls(rd, $0.i))) }.map(\.cx)
+      let firstX = notesX.min() ?? .infinity
+      let midClefs = clefChanges.filter { $0.0 > firstX }
+      var events: [Event] = [], dirs: [Dir] = [], marks = Marks()
+      var markDirs: [(Double, String)] = []
+      marks.endClef = midClefs.last?.1
+      marks.meter = syms.contains { family(cls(rd, $0.i)) == "meterSig" }
+      let bb = L.syms[st.bars[bar]].box
+      let bmid = (bb.0 + bb.2) / 2
+      for s in syms {
+        let r = rd.tok[s.i]!
+        let c = rd.classes[r.cls], f = family(c)
+        func timed(_ e: Event) {
+          e.onset = r.onset; e.onsetP = r.onsetP ?? 0
+          if let b = r.onsetBeatP, let fr = r.onsetFracP { e.dist = (b, fr, r.tupP) }
+        }
+        if f == "note" {
+          var cur = clef
+          for (x, cc) in midClefs where x < s.cx { cur = cc }
+          let (step, octv) = pitch(cur, r.pos)
+          let e = Event(x: s.cx, kind: "note")
+          e.typ = Vocab.typeOf(c); e.dots = r.dots; e.voice = r.voice; e.chord = (r.chord ?? 0) > 0.5
+          e.grace = r.grace; e.tup = r.tup; e.step = step; e.octave = octv
+          e.alter = r.alter ?? Vocab.keyAlter(step, key)
+          e.tie = (r.tie ?? 0) > 0.5; e.unpitched = cur == "perc"; e.si = s.i
+          let stem = s.attrs["stem_dir"] ?? ""
+          e.stem = stem == "up" || stem == "down" ? stem : ""
+          timed(e)
+          events.append(e)
+        } else if f == "rest" {
+          let e = Event(x: s.cx, kind: "rest")
+          e.typ = Vocab.typeOf(c); e.dots = r.dots; e.voice = r.voice; e.tup = r.tup; e.si = s.i
+          timed(e)
+          events.append(e)
+        } else if f == "mRest" || f == "multiRest" {
+          if f == "multiRest" { marks.multirest = 1 }
+          let e = Event(x: s.cx, kind: "mrest"); e.voice = 1; e.si = s.i
+          events.append(e)
+        } else if f == "mRpt" || f == "multiRpt" {
+          marks.repeatBar = true
+        } else if f == "dynam" && dyn.contains(String(c.dropFirst(6))) {
+          dirs.append(Dir(x: s.cx, kind: "dyn", payload: String(c.dropFirst(6)), below: s.cy > st.mid))
+        } else if f == "hairpin" && (c == "hairpin_cres" || c == "hairpin_dim") {
+          dirs.append(Dir(x: s.box.0, kind: "wedge", payload: c == "hairpin_cres" ? "crescendo" : "diminuendo", below: s.cy > st.mid))
+          dirs.append(Dir(x: s.box.2, kind: "wedge", payload: "stop", below: s.cy > st.mid))
+        } else if lookup(artic, c) != nil || lookup(tech, c) != nil || lookup(ornament, c) != nil || c == "fermata" {
+          markDirs.append((s.cx, c))
+        } else if lookup(afterMark, c) != nil {
+          let left = events.filter { $0.kind == "note" && $0.x < s.cx && s.cx - $0.x < 5 * sp }
+          if var m = left.first {
+            for e in left.dropFirst() where e.x > m.x { m = e }
+            m.marks.append(c)
+          }
+        } else if f == "barLine" {
+          if c == "barLine_repeat_start" && s.cx < bmid { marks.left = "repeat_start" } else if barRight[c] != nil && s.cx >= bmid { marks.right = c }
+        } else if f == "ending" {
+          marks.endings.append(String(c.dropFirst("ending_".count)))
+        } else if f == "clef" && s.cx > firstX {
+          dirs.append(Dir(x: s.cx, kind: "clef", payload: clefOfCls(c)))
+        }
+      }
+      decodeAlters(rd, syms, events, sp)
+      for (x, c) in markDirs {
+        let cands = events.filter { $0.kind == "note" && abs($0.x - x) < 1.5 * sp }
+        if var best = cands.first {
+          for e in cands.dropFirst() where abs(e.x - x) < abs(best.x - x) { best = e }
+          best.marks.append(c)
+        }
+      }
+      return (events, dirs, marks)
+    }
+
+    static func decodeAlters(_ rd: Reading, _ syms: [Sym], _ events: [Event], _ sp: Double) {
+      let L = rd.layout
+      let heads = events.filter { $0.kind == "note" && !$0.unpitched }
+      var pairs: [(Double, Int, Int, Int, String)] = []
+      for s in syms {
+        let c = cls(rd, s.i)
+        let kind = String(c.dropFirst("accid_".count))
+        guard family(c) == "accid", let alt = accidAlter[kind] else { continue }
+        let ay = s.cy + (accAnchor[kind] ?? 0) * sp
+        for e in heads {
+          let h = L.syms[e.si]
+          let gap = h.box.0 - s.box.2, dy = abs(h.cy - ay)
+          if -0.5 * sp < gap && gap < 5 * sp && dy < 0.4 * sp {
+            pairs.append((3 * dy / sp + max(0, gap) / sp, s.i, e.si, alt, kind))
+          }
+        }
+      }
+      pairs.sort { ($0.0, $0.1, $0.2, $0.3, $0.4) < ($1.0, $1.1, $1.2, $1.3, $1.4) }
+      var glyph: [Int: (Int, String)] = [:], used = Set<Int>()
+      for (_, gi, ei, alt, kind) in pairs where !used.contains(gi) && glyph[ei] == nil {
+        used.insert(gi); glyph[ei] = (alt, kind)
+      }
+      var held: [String: Int] = [:]
+      for e in Front.stableSorted(heads, by: { L.syms[$0.si].cx < L.syms[$1.si].cx }) {
+        let line = "\(e.step)\(e.octave)"
+        var kind: String?
+        let rule: Int
+        if let g = glyph[e.si] { rule = g.0; kind = g.1; held[line] = rule } else if let h = held[line] { rule = h } else { continue }
+        if rule != e.alter && (rd.tok[e.si]!.heads["alter"]?.p ?? 0) < alterKeepP { e.alter = rule }
+        if let kind, accidAlter[kind] == e.alter, let x = accidXML[kind] { e.accidental = x }
+      }
+    }
+
+    // MARK: voices and rhythm
+    static func voices(_ events: [Event], _ sp: Double, singleStaffPart: Bool, barLen: Q?, score: inout [Double]) -> Voices {
+      var vs = Voices()
+      for e in Front.stableSorted(events, by: { $0.x < $1.x }) { vs[e.voice] = (vs[e.voice] ?? []) + [e] }
+      let nVoices = vs.order.count
+      for v in vs.order {
+        let evs = vs[v]!
+        let roots = evs.filter { $0.kind == "note" && $0.grace == "none" && !$0.chord }
+        var members: [ObjectIdentifier: [Event]] = [:]
+        var order: [Event] = []
+        for e in evs {
+          if e.kind == "note" && e.chord && e.grace == "none" {
+            let near = roots.filter { abs($0.x - e.x) <= 1.5 * sp }
+            if var r = near.first {
+              for q in near.dropFirst() where abs(q.x - e.x) < abs(r.x - e.x) { r = q }
+              members[ObjectIdentifier(r), default: []].append(e)
+              continue
+            }
+            e.chord = false
+          }
+          order.append(e)
+        }
+        if let sc = decodeRhythm(order, strict: singleStaffPart && nVoices == 1, barLen: barLen) { score.append(sc) }
+        var out: [Event] = []
+        var cursor = Q.zero
+        for e in order {
+          e.dur = e.grace != "none" ? Q.zero : Vocab.duration(e.typ, e.dots, e.tup)
+          if e.grace == "none", let on = e.onset, e.onsetP >= onsetP {
+            let at = Q(pyRound(on * 48), 48)
+            if at != cursor {
+              let g = Event(x: e.x - 0.01, kind: "gap"); g.voice = e.voice; g.dur = at - cursor
+              out.append(g)
+              cursor = at
+            }
+          }
+          out.append(e)
+          cursor += e.dur
+          for m in members[ObjectIdentifier(e)] ?? [] { m.dur = e.dur; m.tup = e.tup; out.append(m) }
+        }
+        vs[v] = out
+        func close(_ run: [Event]) {
+          if run.count > 1 { run[run.count - 1].tupletMark = "stop" } else if let f = run.first { f.tupletMark = "" }
+        }
+        var run: [Event] = [], nominal = Q.zero, target: Q?
+        for e in out where !e.chord && e.grace == "none" {
+          if e.tup == "none" || e.tup == "other" {
+            close(run); run = []; nominal = Q.zero; target = nil
+            continue
+          }
+          let a = Int(e.tup.split(separator: "/")[0])!
+          if run.isEmpty || run[0].tup != e.tup {
+            close(run)
+            run = [e]; nominal = Q.zero
+            target = Q(a) * (Vocab.typeQ[e.typ] ?? Q(1))
+            e.tupletMark = "start"
+          } else { run.append(e) }
+          nominal += (Vocab.typeQ[e.typ] ?? Q(1)) * (Q(2) - Q(1, 1 << e.dots))
+          if let t = target, nominal >= t { close(run); run = []; nominal = Q.zero; target = nil }
+        }
+        close(run)
+      }
+      return vs
+    }
+
+    static func decodeRhythm(_ order: [Event], strict: Bool, barLen: Q?) -> Double? {
+      let evs = order.filter { $0.grace == "none" && ($0.kind == "note" || $0.kind == "rest") && $0.dist != nil }
+      guard !evs.isEmpty else { return nil }
+      let G = 48, K = 16 * G
+      let NEG = -1e18
+      let L48 = barLen.map { Int(($0 * Q(G)).double.rounded(.towardZero)) } ?? K
+      func emit(_ e: Event) -> [Double] {
+        let pb = e.dist!.beat.map { log(min(max($0, 1e-6), 1)) }, pf = e.dist!.frac.map { log(min(max($0, 1e-6), 1)) }
+        var out = [Double](repeating: 0, count: K)
+        for b in 0..<16 { for f in 0..<G { out[b * G + f] = pb[b] + pf[f] } }
+        if L48 < K { for k in max(0, L48)..<K { out[k] += pastBarLogp } }
+        return out
+      }
+      func tupLogp(_ e: Event, _ t: String) -> Double {
+        guard let tp = e.dist!.tup else { return t == e.tup ? 0 : log(0.05) }
+        return log(max(1e-6, tp[Vocab.tuplets.firstIndex(of: t)!]))
+      }
+      func dur48(_ e: Event, _ t: String) -> Int? {
+        let d = Vocab.duration(e.typ, e.dots, t) * Q(G)
+        return d.d == 1 ? d.n : nil
+      }
+      func endLogp(_ e: Event, _ t: String) -> ([Double], [Double]) {
+        let d = t != "other" ? dur48(e, t) : nil
+        guard let d, d != 0 else { return ([Double](repeating: 0, count: K), [Double](repeating: 0, count: K)) }
+        return ((0..<K).map { $0 + d > L48 ? pastBarLogp : 0 }, (0..<K).map { $0 + d < L48 ? endGapLogp : 0 })
+      }
+      func argmaxFirst(_ a: [Double]) -> Int { var k = 0; for i in 1..<a.count where a[i] > a[k] { k = i }; return k }
+      if evs.count == 1 {
+        let (over, short) = endLogp(evs[0], evs[0].tup)
+        let em = emit(evs[0])
+        return (0..<K).map { em[$0] + over[$0] + short[$0] }.max()!
+      }
+      let choices: [[String]] = evs.map { e in
+        var seen: [String] = []
+        for t in ["none", "3/2", e.tup] where !seen.contains(t) { seen.append(t) }
+        return seen.filter { $0 != "other" && (dur48(e, $0) ?? 0) != 0 }
+      }
+      var score = emit(evs[0])
+      var back: [[(Int, Int, Int)]] = []
+      for i in 1..<evs.count {
+        let prev = evs[i - 1], e = evs[i]
+        let em = emit(e)
+        var best = [Double](repeating: NEG, count: K)
+        var arg = [(Int, Int, Int)](repeating: (0, 0, 0), count: K)
+        var pref = score, prefArg = [Int](repeating: 0, count: K)
+        for k in 1..<K { pref[k] = max(pref[k - 1], score[k]) }
+        var pa = 0
+        for k in 0..<K { if score[k] >= pref[k] { pa = max(pa, k) }; prefArg[k] = pa }
+        var suf = score, sufArg = [Int](repeating: K, count: K)
+        for k in stride(from: K - 2, through: 0, by: -1) { suf[k] = max(suf[k + 1], score[k]) }
+        var sa = K
+        for k in stride(from: K - 1, through: 0, by: -1) { if score[k] >= suf[k] { sa = min(sa, k) }; sufArg[k] = sa }
+        for (c, t) in choices[i - 1].enumerated() {
+          guard let d = dur48(prev, t), d > 0, d < K else { continue }
+          let tl = tupLogp(prev, t)
+          for j in d..<K {
+            let v = score[j - d] + tl
+            if v > best[j] { best[j] = v; arg[j] = (j - d, c, 0) }
+          }
+          if d + 1 < K {
+            for j in (d + 1)..<K {
+              let v = pref[j - d - 1] + tl + gapLogp
+              if v > best[j] { best[j] = v; arg[j] = (prefArg[j - d - 1], c, 1) }
+            }
+          }
+          if strict { continue }
+          for j in 0..<K {
+            let lo = min(max(j - d + 1, 0), K - 1)
+            var o = suf[lo] + tl + overlapLogp, osrc = sufArg[lo]
+            let same = score[j] + tl + sameOnsetLogp
+            if same > o { o = same; osrc = j }
+            if o > best[j] { best[j] = o; arg[j] = (osrc, c, 2) }
+          }
+        }
+        score = (0..<K).map { best[$0] + em[$0] }
+        back.append(arg)
+      }
+      let (over, short) = endLogp(evs[evs.count - 1], evs[evs.count - 1].tup)
+      score = (0..<K).map { score[$0] + over[$0] }
+      var j = argmaxFirst(score)
+      let total = score[j] + short[j]
+      var states = [j], picks: [Int] = []
+      for arg in back.reversed() {
+        let (k, c, _) = arg[j]
+        picks.append(c); states.append(k); j = k
+      }
+      states.reverse(); picks.reverse()
+      for (i, e) in evs.enumerated() {
+        e.onset = Double(states[i]) / Double(G); e.onsetP = 1.0
+        if i < picks.count { e.tup = choices[i][picks[i]] }
+      }
+      return total
+    }
+
+    // MARK: ties
+    static func drawnTies(_ rd: Reading, _ pairs: [(Event, Event?, Bool)]) -> Set<Int> {
+      let L = rd.layout, sym = L.syms
+      let curves = sym.filter { $0.staff >= 0 && isReal(rd, $0.i) && cls(rd, $0.i) == "curve" }
+      func beside(_ c: Sym, _ a: Sym, _ reach: Double = 0.5) -> Bool {
+        let sp = L.staves[a.staff].sp
+        return max(c.box.1 - a.cy, a.cy - c.box.3) <= tieRise * sp && a.box.0 - reach * sp <= c.box.0 && c.box.0 <= a.box.2 + 1.5 * sp
+      }
+      var edges: [(Double, Int, Int)] = []
+      for (n, (e, f, _)) in pairs.enumerated() {
+        guard let f, e.si >= 0, f.si >= 0 else { continue }
+        let a = sym[e.si], z = sym[f.si]
+        let st = L.staves[a.staff]
+        let sp = st.sp, across = L.staves[z.staff].system != st.system
+        for c in curves where c.staff == a.staff && beside(c, a) {
+          if across && c.box.2 < st.x1 - 3 * sp { continue }
+          if !across && !(z.box.0 - 1.5 * sp <= c.box.2 && c.box.2 <= z.box.2 + 0.5 * sp) { continue }
+          edges.append(((abs(c.cy - a.cy) + abs(c.box.0 - a.box.2)) / sp, n, c.i))
+        }
+      }
+      var kept = Set<Int>(), used = Set<Int>()
+      for (_, n, c) in edges.sorted(by: { ($0.0, $0.1, $0.2) < ($1.0, $1.1, $1.2) }) where !kept.contains(n) && !used.contains(c) {
+        kept.insert(n); used.insert(c)
+      }
+      for (n, (e, f, nxt)) in pairs.enumerated() {
+        guard !kept.contains(n), let f else { continue }
+        if e.si < 0 || f.si < 0 { if nxt { kept.insert(n) }; continue }
+        let a = sym[e.si], z = sym[f.si]
+        let sp = L.staves[a.staff].sp
+        let far = L.staves[z.staff].system != L.staves[a.staff].system || z.box.0 - a.box.2 > tieFar * sp
+        let slur = curves.contains { !used.contains($0.i) && $0.staff == a.staff && beside($0, a, 1.5) }
+        if !(far && !nxt) && !slur { kept.insert(n) }
+      }
+      return kept
+    }
+
+    // MARK: beams, slurs and other spanners
+    static func attach(_ rd: Reading, _ built: [[[StaffBar?]]], _ plans: [[Int]], _ place: [[Int: Int]]) {
+      let L = rd.layout, sym = L.syms
+      var slot: [Int: Int] = [:]
+      for at in place { for (p, k) in at { slot[k] = p } }
+      var notesOn: [Int: [Event]] = [:], notesOrder: [Int] = []
+      for measures in built {
+        for m in measures {
+          for st in m {
+            guard let st else { continue }
+            for evs in st.voices.values {
+              for e in evs where e.kind == "note" && !e.copied && e.si >= 0 {
+                let k = sym[e.si].staff
+                if notesOn[k] == nil { notesOrder.append(k) }
+                notesOn[k, default: []].append(e)
+              }
+            }
+          }
+        }
+      }
+      for k in notesOrder { notesOn[k] = Front.stableSorted(notesOn[k]!) { $0.x < $1.x } }
+      let spanners = sym.filter { $0.staff >= 0 && isReal(rd, $0.i) }
+      var claimed = Set<ObjectIdentifier>()
+      var partOf: [Int: Int] = [:]
+      for (pi, pl) in plans.enumerated() { for pos in pl { partOf[pos] = pi } }
+      func part(_ k: Int, _ fallback: Int) -> Int { slot[k].flatMap { partOf[$0] } ?? fallback }
+
+      // beams
+      for b in Front.stableSorted(spanners.filter { cls(rd, $0.i) == "beam" }, by: { $0.box.0 < $1.box.0 }) {
+        let sp = L.staves[b.staff].sp
+        let stB = L.staves[b.staff]
+        let near = [b.staff] + [b.staff - 1, b.staff + 1].filter {
+          0 <= $0 && $0 < L.staves.count && L.staves[$0].system == stB.system && part($0, -1) == part(b.staff, -2)
+        }
+        var under: [Event] = []
+        for k in near {
+          for e in notesOn[k] ?? [] where !e.chord && e.grace == "none" && !claimed.contains(ObjectIdentifier(e)) {
+            let h = sym[e.si].box
+            let x = b.cy < sym[e.si].cy ? h.2 : h.0
+            guard b.box.0 - beamReach * sp <= x && x <= b.box.2 + beamReach * sp else { continue }
+            guard abs(sym[e.si].cy - b.cy) <= (k == b.staff ? 8 : 4.5) * sp, beamLevel[e.typ] != nil else { continue }
+            under.append(e)
+          }
+        }
+        if under.count < 2 { continue }
+        let vset = Array(Set(under.map(\.voice))).sorted()
+        var voice = vset[0]
+        for v in vset.dropFirst() where under.filter({ $0.voice == v }).count > under.filter({ $0.voice == voice }).count { voice = v }
+        let group = Front.stableSorted(under.filter { $0.voice == voice }) { $0.x < $1.x }
+        if group.count < 2 { continue }
+        let lv = group.map { beamLevel[$0.typ]! }
+        for n in 1...lv.max()! {
+          for (i, e) in group.enumerated() where lv[i] >= n {
+            let prev = i > 0 && lv[i - 1] >= n
+            let nxt = i + 1 < group.count && lv[i + 1] >= n
+            var val = prev && nxt ? "continue" : nxt ? "begin" : prev ? "end" : (i + 1 < group.count ? "forward hook" : "backward hook")
+            if n == 1 && val.hasSuffix("hook") { val = i == 0 ? "begin" : "end" }
+            e.beams.append((n, val))
+          }
+        }
+        for e in group {
+          claimed.insert(ObjectIdentifier(e))
+          if e.stem.isEmpty { e.stem = b.cy < sym[e.si].cy ? "up" : "down" }
+        }
+      }
+
+      // slurs
+      var nums: [Int: [((Int, Double), Int)]] = [:]
+      var order: [ObjectIdentifier: (Int, Double)] = [:]
+      for evs in notesOn.values { for e in evs { order[ObjectIdentifier(e)] = (L.staves[sym[e.si].staff].system, e.x) } }
+      let curves = spanners.filter { cls(rd, $0.i) == "curve" }.enumerated().sorted {
+        ($0.element.staff, $0.element.box.0, $0.offset) < ($1.element.staff, $1.element.box.0, $1.offset)
+      }.map(\.element)
+      for c in curves {
+        let st = L.staves[c.staff], sp = st.sp
+        let cand = (notesOn[c.staff] ?? []).filter { abs(sym[$0.si].cy - c.cy) <= 7 * sp }
+        if cand.isEmpty { continue }
+        let near = cand.filter { c.box.0 - sp <= sym[$0.si].cx && sym[$0.si].cx <= c.box.2 + sp }.map { sym[$0.si].cy }.sorted()
+        let over = !near.isEmpty && c.cy < near[near.count / 2]
+        let yend = over ? c.box.3 : c.box.1
+        func cost(_ e: Event, _ x: Double) -> Double { abs(sym[e.si].cx - x) / sp + 0.5 * abs(sym[e.si].cy - yend) / sp }
+        func argmin(_ x: Double) -> Event { var m = cand[0]; for e in cand.dropFirst() where cost(e, x) < cost(m, x) { m = e }; return m }
+        let a = argmin(c.box.0)
+        var z = argmin(c.box.2)
+        if abs(sym[a.si].cx - c.box.0) > 2.5 * sp { continue }
+        if abs(sym[z.si].cx - c.box.2) > 2.5 * sp {
+          if c.box.2 < st.x1 - 3 * sp { continue }
+          guard let nxt = nextSystemFirst(L, notesOn, c.staff, place) else { continue }
+          z = nxt
+        }
+        if a === z { continue }
+        if a.tie && a.step == z.step && a.octave == z.octave { continue }
+        let oa = order[ObjectIdentifier(a)]!
+        let busy = (nums[c.staff] ?? []).filter { $0.0 >= oa }.map(\.1)
+        let num = busy.count < 6 ? (1...6).first { !busy.contains($0) }! : 1
+        nums[c.staff, default: []].append((order[ObjectIdentifier(z)]!, num))
+        a.slurs.append(("start", num)); z.slurs.append(("stop", num))
+      }
+
+      for s in spanners {
+        let c = cls(rd, s.i)
+        let sp = L.staves[s.staff].sp
+        let evs = notesOn[s.staff] ?? []
+        if c == "arpeg" {
+          for e in evs {
+            let ls = sym[e.si]
+            if s.box.2 - 0.5 * sp <= ls.cx && ls.cx <= s.box.2 + 3 * sp && s.box.1 - sp <= ls.cy && ls.cy <= s.box.3 + sp { e.arpeggiate = true }
+          }
+        } else if octave[c] != nil || c == "octave_8" {
+          let (shift, typ, size) = octave[c] ?? (s.cy < L.staves[s.staff].mid ? (1, "down", 8) : (-1, "up", 8))
+          let inside = evs.filter { s.box.0 - sp <= sym[$0.si].cx && sym[$0.si].cx <= s.box.2 + sp }
+          if let f = inside.first, let l = inside.last {
+            for e in inside { e.octave += shift }
+            f.pre.append(Dir(x: f.x, kind: "octave", payload: typ, size: size, below: shift < 0))
+            l.post.append(Dir(x: l.x, kind: "octave", payload: "stop", size: size, below: shift < 0))
+          }
+        } else if c == "pedal" {
+          let inside = evs.filter { s.box.0 - sp <= sym[$0.si].cx && sym[$0.si].cx <= s.box.2 + sp }
+          if let f = inside.first, let l = inside.last {
+            f.pre.append(Dir(x: f.x, kind: "pedal", payload: "start", below: true))
+            l.post.append(Dir(x: l.x, kind: "pedal", payload: "stop", below: true))
+          }
+        } else if (c == "repeatMark_segno" || c == "repeatMark_coda"), var e = evs.first {
+          for q in evs.dropFirst() where abs(sym[q.si].cx - s.cx) < abs(sym[e.si].cx - s.cx) { e = q }
+          e.pre.append(Dir(x: e.x, kind: c.hasSuffix("segno") ? "segno" : "coda", payload: ""))
+        }
+      }
+    }
+
+    static func nextSystemFirst(_ L: Layout, _ notesOn: [Int: [Event]], _ staff: Int, _ place: [[Int: Int]]) -> Event? {
+      let st = L.staves[staff]
+      guard st.system + 1 < L.systems.count else { return nil }
+      guard let p = place[st.system].sorted(by: { $0.key < $1.key }).first(where: { $0.value == staff })?.key,
+            let k = place[st.system + 1][p] else { return nil }
+      return notesOn[k]?.first
+    }
+
+    // MARK: bar lengths
+    static func voiceStarts(_ evs: [Event], _ mrestLen: Q) -> ([Q?], Q) {
+      var starts: [Q?] = [], pos = Q.zero, end = Q.zero, root = Q.zero
+      for e in evs {
+        if e.kind == "gap" { starts.append(nil); pos += e.dur } else if e.chord { starts.append(root) } else {
+          starts.append(pos); root = pos
+          pos += e.kind == "mrest" ? mrestLen : e.dur
+          end = max(end, pos)
+        }
+      }
+      return (starts, end)
+    }
+
+    static func columnLengths(_ built: [[[StaffBar?]]]) -> [Q?] {
+      var out: [Q?] = []
+      for mi in 0..<(built.map(\.count).max() ?? 0) {
+        var votes: [(Q, Int)] = []
+        var meters = Set<Q>()
+        for ms in built {
+          guard mi < ms.count, let first = ms[mi].compactMap({ $0 }).first else { continue }
+          let barLen = timeLen(first.state.time)
+          meters.insert(barLen)
+          let short = (mi == 0 && first.marks.meter) || shortRight.contains(first.marks.right ?? "")
+          for st in ms[mi] {
+            guard let st else { continue }
+            let n = st.voices.values.map { voiceStarts($0, barLen).1 }.max() ?? barLen
+            let key = short || st.voices.isEmpty ? n : max(n, barLen)
+            if let at = votes.firstIndex(where: { $0.0 == key }) { votes[at].1 += 1 } else { votes.append((key, 1)) }
+          }
+        }
+        if votes.isEmpty { out.append(nil); continue }
+        var best = votes[0]
+        func rank(_ v: (Q, Int)) -> (Int, Int, Q) { (v.1, meters.contains(v.0) ? 1 : 0, Q.zero - v.0) }
+        for v in votes.dropFirst() where rank(v) > rank(best) { best = v }
+        out.append(best.0)
+      }
+      return out
+    }
+
+    static func fitValue(_ q: Q) -> (String, Int)? {
+      for (typ, t) in Vocab.typeQuarters {
+        for dots in 0..<3 where t * (Q(2) - Q(1, 1 << dots)) == q { return (typ, dots) }
+      }
+      return nil
+    }
+
+    static func chop(_ evs: [Event], _ cut: Q) -> [Event] {
+      let (starts, end) = voiceStarts(evs, cut)
+      if end <= cut { return evs }
+      var kept: [(Event, Q)] = [], dropped: [Event] = []
+      var root: Event?, shortened = false
+      for (e, s) in zip(evs, starts) {
+        if e.kind == "gap" { continue }
+        let s = s!
+        if e.chord {
+          guard let r = root else { dropped.append(e); continue }
+          if shortened { e.typ = r.typ; e.dots = r.dots; e.dur = r.dur; e.beams = [] }
+          kept.append((e, s))
+          continue
+        }
+        let length = e.kind == "mrest" ? cut : e.dur
+        root = nil; shortened = false
+        if s >= cut { dropped.append(e); continue }
+        if s + length > cut {
+          let fit = (e.kind == "note" || e.kind == "rest") && (e.tup == "none" || e.tup == "other") ? fitValue(cut - s) : nil
+          guard let fit else { dropped.append(e); continue }
+          e.typ = fit.0; e.dots = fit.1; e.dur = cut - s; e.beams = []
+          shortened = true
+        }
+        root = e
+        kept.append((e, s))
+      }
+      var out: [Event] = [], cursor = Q.zero
+      for (e, s) in kept {
+        if !e.chord {
+          if s != cursor {
+            let g = Event(x: e.x - 0.01, kind: "gap"); g.voice = e.voice; g.dur = s - cursor
+            out.append(g); cursor = s
+          }
+          cursor += e.kind == "mrest" ? cut : e.dur
+        }
+        out.append(e)
+      }
+      let notes = out.filter { $0.kind == "note" }
+      for d in dropped {
+        if d.tieStop, let e = notes.last(where: { $0.tie && $0.step == d.step && $0.octave == d.octave }) { e.tie = false }
+        for (typ, num) in d.slurs where typ == "stop" && !notes.isEmpty {
+          let last = notes.last(where: { !$0.chord }) ?? notes[notes.count - 1]
+          if let at = last.slurs.firstIndex(where: { $0 == ("start", num) }) { last.slurs.remove(at: at) } else { last.slurs.append(("stop", num)) }
+        }
+      }
+      let heads = notes.filter { !$0.chord && $0.grace == "none" }
+      for lvl in Set(heads.flatMap { $0.beams.map(\.0) }).sorted() {
+        var group: [Event] = []
+        for e in heads {
+          let val = e.beams.first { $0.0 == lvl }?.1
+          if val == "begin" || (val == "continue" && group.isEmpty) {
+            group = [e]
+            e.beams = e.beams.map { ($0.0, $0.0 == lvl ? "begin" : $0.1) }
+          } else if val == "continue" { group.append(e) } else if val == "end" {
+            if group.isEmpty { e.beams = e.beams.filter { $0.0 < lvl } }
+            group = []
+          }
+        }
+        if group.count > 1 { group[group.count - 1].beams = group[group.count - 1].beams.map { ($0.0, $0.0 == lvl ? "end" : $0.1) } } else if let g = group.first { g.beams = g.beams.filter { $0.0 < lvl } }
+      }
+      var run: [Event] = []
+      for e in out where (e.kind == "note" || e.kind == "rest") && !e.chord && e.grace == "none" {
+        if e.tupletMark == "start" { run = [e] } else if !run.isEmpty && e.tup == run[0].tup {
+          run.append(e)
+          if e.tupletMark == "stop" { run = [] }
+        } else { run = [] }
+      }
+      if run.count > 1 { run[run.count - 1].tupletMark = "stop" } else if let f = run.first { f.tupletMark = "" }
+      return out
+    }
+
+    // MARK: the page's meter
+    static func pageMeter(_ rd: Reading, _ build: (String?) -> [Double]) -> String? {
+      let L = rd.layout
+      guard !L.systems.isEmpty else { return nil }
+      let dists = L.systems[0].staves.compactMap { k -> [Double]? in
+        guard let b = L.staves[k].bars.first else { return nil }
+        return rd.tok[b]?.timeP
+      }
+      guard !dists.isEmpty else { return nil }
+      let p = (0..<dists[0].count).map { i in dists.reduce(0) { $0 + $1[i] } / Double(dists.count) }
+      let meters = Vocab.times.enumerated().compactMap { i, t -> (String, Q, Double)? in
+        guard let t, t != "other" else { return nil }
+        return (t, timeLen(t), p[i])
+      }
+      let z = meters.reduce(0) { $0 + $1.2 }
+      let zz = z != 0 ? z : 1.0
+      var lengths: [(Q, String)] = []
+      for m in Front.stableSorted(meters, by: { $0.2 > $1.2 }) where !lengths.contains(where: { $0.0 == m.1 }) && lengths.count < meterLengths {
+        lengths.append((m.1, m.0))
+      }
+      let runs = lengths.map { ($0.0, build($0.1)) }
+      let n = runs.map(\.1.count).min()!
+      var fit: [Q: Double] = [:]
+      for (ln, _) in runs { fit[ln] = 0 }
+      for i in 0..<n {
+        let best = runs.map { $0.1[i] }.max()!
+        for (ln, r) in runs { fit[ln]! += max(r[i] - best, barVoteFloor) }
+      }
+      var bestM: (String, Double)?
+      for m in meters where fit[m.1] != nil {
+        let v = log(max(m.2 / zz, 1e-9)) + fit[m.1]!
+        if bestM == nil || v > bestM!.1 { bestM = (m.0, v) }
+      }
+      return bestM?.0
+    }
+
+    // MARK: MusicXML
+    static func roundHalfEven(_ q: Q) -> Int {
+      let fl = Int((Double(q.n) / Double(q.d)).rounded(.down))
+      let rem = q - Q(fl)
+      if rem < Q(1, 2) { return fl }
+      if Q(1, 2) < rem { return fl + 1 }
+      return fl % 2 == 0 ? fl : fl + 1
+    }
+
+    /// Each staff as the score places it: its part (the MusicXML part index), its system, its staff space and
+    /// lines, and where its measures start (the left edge of each measure column after the first). For reading
+    /// the chord symbols printed above a staff and putting them into the measures they belong to.
+    struct PlacedStaff {
+      let part: Int, system: Int, grandStaff: Bool
+      let sp: Double, x0: Double, x1: Double, y0: Double, y1: Double
+      let measureStarts: [Double]
+    }
+
+    static func placedStaves(_ rd: Reading) -> [PlacedStaff] {
+      let L = rd.layout
+      let plans = planParts(rd)
+      let place = alignSystems(rd, plans)
+      var out: [PlacedStaff] = []
+      for (si, sy) in L.systems.enumerated() where si < place.count {
+        for (n, pl) in plans.enumerated() {
+          for pos in pl {
+            guard let k = place[si][pos], let at = sy.staves.firstIndex(of: k), at < sy.columns.count else { continue }
+            let st = L.staves[k], cols = sy.columns[at]
+            guard cols.count == st.bars.count, !st.bars.isEmpty else { continue }
+            var lefts: [Int: Double] = [:]
+            var right = -Double.infinity
+            for (j, b) in st.bars.enumerated() {
+              let box = L.syms[b].box
+              lefts[cols[j]] = min(lefts[cols[j]] ?? .infinity, box.0)
+              right = max(right, box.2)
+            }
+            let starts = lefts.keys.sorted().map { lefts[$0]! }
+            guard let left = starts.first, right > left else { continue }
+            out.append(PlacedStaff(part: n, system: si, grandStaff: pl.count == 2, sp: st.sp, x0: left, x1: right,
+                                   y0: st.y0, y1: st.y1, measureStarts: Array(starts.dropFirst())))
+          }
+        }
+      }
+      return out
+    }
+
+    /// Whether the page's first system prints a time signature at its start.
+    static func openingPrinted(_ rd: Reading) -> Bool {
+      guard let sy = rd.layout.systems.first else { return false }
+      return rd.layout.syms.contains { s in
+        sy.staves.contains(s.staff) && s.bar == 0 && isReal(rd, s.i) && family(cls(rd, s.i)) == "meterSig"
+      }
+    }
+
+    /// `carriedMeter`: the meter the previous page ended in. A page that prints no time signature at its start
+    /// is still in that meter, so it is used instead of a guess from this page's rhythms.
+    static func write(_ rd: Reading, title: String? = nil, carriedMeter: String? = nil) -> String {
+      let L = rd.layout
+      let plans = planParts(rd)
+      let place = alignSystems(rd, plans)
+      let root = XE("score-partwise", nil, [("version", "4.0")])
+      if let title, !title.isEmpty { root.sub("work").sub("work-title", title) }
+      root.sub("identification").sub("encoding").sub("software", "copisteria")
+      let plist = root.sub("part-list")
+      let groups = partGroups(rd, plans)
+      for n in plans.indices {
+        for (g, (a, _, sym)) in groups.enumerated() where a == n {
+          plist.sub("part-group", nil, [("type", "start"), ("number", g + 1)]).sub("group-symbol", sym)
+        }
+        plist.sub("score-part", nil, [("id", "P\(n + 1)")]).sub("part-name", "Part \(n + 1)", [("print-object", "no")])
+        for (g, (_, b, _)) in groups.enumerated() where b == n {
+          plist.sub("part-group", nil, [("type", "stop"), ("number", g + 1)])
+        }
+      }
+      var columns: [(Int, Int)] = []
+      for (si, sy) in L.systems.enumerated() {
+        let ncol = 1 + (sy.columns.filter { !$0.isEmpty }.map { $0.max()! }.max() ?? -1)
+        columns += (0..<ncol).map { (si, $0) }
+      }
+      let singlePart = plans.count == 1
+
+      func build(_ opening: String?) -> ([[[StaffBar?]]], [Double]) {
+        var built: [[[StaffBar?]]] = []
+        var fit: [Double] = []
+        for pl in plans {
+          var state = [BarState](repeating: BarState(), count: pl.count)
+          var first = [Bool](repeating: true, count: pl.count)
+          var measures: [[StaffBar?]] = []
+          var prevEvents = [[Event]?](repeating: nil, count: pl.count)
+          for (si, c) in columns {
+            let sy = L.systems[si]
+            var m: [StaffBar?] = []
+            for (ki, pos) in pl.enumerated() {
+              guard let staff = place[si][pos] else { m.append(nil); continue }
+              let cols = sy.columns[sy.staves.firstIndex(of: staff)!]
+              let bars = cols.indices.filter { cols[$0] == c }
+              guard let j = bars.first else { m.append(nil); continue }
+              state[ki] = barState(rd, staff, j, state[ki])
+              if first[ki] {
+                first[ki] = false
+                if let opening { state[ki].time = opening }
+              }
+              var (ev, dirs, marks) = events(rd, staff, j, clef: state[ki].clef, key: state[ki].key)
+              for j2 in bars.dropFirst() {
+                let (ev2, dirs2, marks2) = events(rd, staff, j2, clef: state[ki].clef, key: state[ki].key)
+                ev += ev2; dirs += dirs2
+                marks.right = marks2.right ?? marks.right
+                marks.endings += marks2.endings
+                marks.endClef = marks2.endClef ?? marks.endClef
+                marks.repeatBar = marks.repeatBar || marks2.repeatBar
+              }
+              if marks.repeatBar && ev.isEmpty, let prev = prevEvents[ki], !prev.isEmpty {
+                ev = prev.map { e in let c = e.copy(); c.copied = true; return c }
+              }
+              let vs = voices(ev, L.staves[staff].sp, singleStaffPart: pl.count == 1, barLen: timeLen(state[ki].time), score: &fit)
+              if !ev.isEmpty { prevEvents[ki] = ev }
+              m.append(StaffBar(staff: staff, bar: j, voices: vs, dirs: dirs, marks: marks, state: state[ki]))
+              if let ec = marks.endClef { state[ki].clef = ec }
+            }
+            measures.append(m)
+          }
+          built.append(measures)
+        }
+        return (built, fit)
+      }
+
+      let carried = carriedMeter.flatMap { m in Vocab.times.contains(m) && m != "other" ? m : nil }
+      let opening = carried != nil && !openingPrinted(rd) ? carried : pageMeter(rd) { build($0).1 }
+      let built = build(opening).0
+
+      // ties: the next note of the voice on the same step and octave (this bar or the next)
+      var pairs: [(Event, Event?, Bool)] = []
+      for measures in built {
+        for ki in 0..<(measures.map(\.count).max() ?? 0) {
+          var streams = Voices()
+          for m in measures {
+            guard ki < m.count, let st = m[ki] else { continue }
+            for v in st.voices.order { streams[v] = (streams[v] ?? []) + st.voices[v]! }
+          }
+          for evs in streams.values {
+            var group = -1, groups: [Int] = []
+            for f in evs { if !(f.kind == "note" && f.chord) { group += 1 }; groups.append(group) }
+            for (ai, e) in evs.enumerated() where e.kind == "note" && e.tie {
+              var partner: Event?, fi = ai
+              for q in (ai + 1)..<min(ai + 12, evs.count) {
+                let f = evs[q]
+                if f.kind == "note" && f.step == e.step && f.octave == e.octave { partner = f; fi = q; break }
+              }
+              pairs.append((e, partner, partner != nil && groups[fi] == groups[ai] + 1))
+            }
+          }
+        }
+      }
+      let kept = drawnTies(rd, pairs)
+      for (n, (e, partner, _)) in pairs.enumerated() {
+        if !kept.contains(n) { e.tie = false } else if let partner { partner.tieStop = true; partner.alter = e.alter }
+      }
+      attach(rd, built, plans, place)
+
+      let barEnds = columnLengths(built)
+      var allDurs = Set<Q>()
+      for measures in built {
+        for (mi, m) in measures.enumerated() {
+          for st in m {
+            guard let st else { continue }
+            for v in st.voices.order {
+              if let cut = barEnds[mi] { st.voices[v] = chop(st.voices[v]!, cut) }
+              allDurs.formUnion(st.voices[v]!.map(\.dur))
+            }
+          }
+        }
+      }
+      allDurs.formUnion(barEnds.compactMap { $0 })
+      for ms in built { for m in ms { if let f = m.first, let f { allDurs.insert(timeLen(f.state.time)) } } }
+      var div = 1
+      for d in allDurs where !d.isZero {
+        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+        div = div * d.d / gcd(div, d.d)
+      }
+      div = min(div, 10080)
+      func units(_ q: Q) -> Int { max(0, roundHalfEven(q * Q(div))) }
+
+      for (n, (pl, measures)) in zip(plans, built).enumerated() {
+        let part = root.sub("part", nil, [("id", "P\(n + 1)")])
+        var lastKey: Int?, lastTime: String?, lastClefs = [String?](repeating: nil, count: pl.count)
+        var meterShown = false
+        var number = 0
+        var pendingEndings: [String] = []
+        let multi = pl.count > 1
+        for (mi, staves) in measures.enumerated() {
+          number += 1
+          let meas = part.sub("measure", nil, [("number", number)])
+          // the page's own line breaks, so a system's measures can be found again (chord placement, layout)
+          if mi > 0 && mi < columns.count && columns[mi].1 == 0 { meas.sub("print", nil, [("new-system", "yes")]) }
+          guard let first = staves.compactMap({ $0 }).first else {
+            if mi == 0 {
+              let attrs = meas.sub("attributes")
+              attrs.sub("divisions", div)
+              if multi { attrs.sub("staves", pl.count) }
+            }
+            continue
+          }
+          let key = first.state.key, time = first.state.time
+          let clefs = staves.enumerated().map { i, s in s?.state.clef ?? lastClefs[i] }
+          var attrs: XE?
+          if mi == 0 || key != lastKey || time != lastTime || clefs != lastClefs || first.marks.multirest != nil {
+            let a = meas.sub("attributes")
+            attrs = a
+            if mi == 0 { a.sub("divisions", div) }
+            if mi == 0 || key != lastKey { a.sub("key").sub("fifths", key) }
+            if (mi == 0 || time != lastTime) && time != "other" {
+              let printed = staves.contains { $0?.marks.meter == true }
+              meterShown = printed
+              let t = a.sub("time", nil, printed ? [] : [("print-object", "no")])
+              let bt = time.split(separator: "/")
+              t.sub("beats", bt[0]); t.sub("beat-type", bt[1])
+            }
+            if mi == 0 && multi { a.sub("staves", pl.count) }
+            for (i, cl) in clefs.enumerated() {
+              guard let cl, mi == 0 || cl != lastClefs[i] else { continue }
+              let (sign, line, octc) = clefXML[cl] ?? ("G", 2, 0)
+              let ce = multi ? a.sub("clef", nil, [("number", i + 1)]) : a.sub("clef")
+              ce.sub("sign", sign)
+              if let line { ce.sub("line", line) }
+              if octc != 0 { ce.sub("clef-octave-change", octc) }
+            }
+          }
+          lastKey = key; lastTime = time; lastClefs = clefs
+          let mr = first.marks.multirest
+          if let mr, singlePart, mr > 1, let attrs { attrs.sub("measure-style").sub("multiple-rest", mr) }
+          let barLen = timeLen(time)
+          let barEnd = barEnds[mi] ?? barLen
+          let starts = first.marks.endings
+          if first.marks.left != nil || !starts.isEmpty {
+            let bl = meas.sub("barline", nil, [("location", "left")])
+            if first.marks.left != nil { bl.sub("bar-style", "heavy-light") }
+            for num in starts.prefix(1) { bl.sub("ending", nil, [("number", num), ("type", "start")]) }
+            if first.marks.left != nil { bl.sub("repeat", nil, [("direction", "forward")]) }
+            pendingEndings = Array(starts.prefix(1))
+          }
+          let opening = mi == 0 && first.marks.meter
+          let keepShort = opening || shortRight.contains(first.marks.right ?? "")
+          var posQ = Q.zero, maxEnd = Q.zero
+          for (ki, st) in staves.enumerated() {
+            guard let st else { continue }
+            let staffNo = ki + 1
+            let sNo: Int? = multi ? staffNo : nil
+            // Where each voice number on this staff has got to. The reader can put a second line that sounds at
+            // the same time into the same voice (an inner line under held chords, placed by its onsets with a
+            // step back in time); MusicXML wants that line in a voice of its own, so it moves to the first voice
+            // number on the staff that is free at that point. Nothing is dropped or re-timed.
+            var ends: [Int: Q] = [:]
+            var lastVoice = 0
+            // A line moved off its voice stays in the voice it moved to while that voice is free, so a group (a
+            // triplet, a run) is not split between two voices when its own voice frees up mid-group.
+            var moved: [Int: Int] = [:]
+            func freeVoice(_ v: Int, at t: Q) -> Int {
+              if let x = moved[v], (ends[x] ?? Q.zero) <= t { return x }
+              guard let end = ends[v], t < end else { moved[v] = nil; return v }
+              let used = Set(ends.keys).union([v]).sorted()
+              let pick = used.first { $0 != v && (ends[$0] ?? Q.zero) <= t } ?? ((ends.keys.max() ?? v) + 1)
+              moved[v] = pick
+              return pick
+            }
+            if st.voices.isEmpty {
+              if !posQ.isZero { meas.sub("backup").sub("duration", units(posQ)); posQ = Q.zero }
+              let fw = meas.sub("forward")
+              fw.sub("duration", units(barEnd))
+              if multi { fw.sub("staff", staffNo) }
+              posQ = barEnd
+              continue
+            }
+            for (vi, v) in st.voices.order.sorted().enumerated() {
+              let evs = st.voices[v]!
+              if !posQ.isZero { meas.sub("backup").sub("duration", units(posQ)); posQ = Q.zero }
+              let voiceNo = v + 4 * (staffNo - 1)
+              var dirs = vi == 0 ? st.dirs.enumerated().sorted {
+                ($0.element.x, $0.element.kind, $0.element.payload, $0.offset) < ($1.element.x, $1.element.kind, $1.element.payload, $1.offset)
+              }.map(\.element) : []
+              // a chord member's directions go with its root
+              var cRoot: Event?, cLast: Event?, cMembers: [Event] = []
+              for e in evs.map({ Optional($0) }) + [nil] {
+                if let e, e.kind == "note" && e.chord, let r = cRoot {
+                  r.pre += e.pre; e.pre = []
+                  cMembers.append(e); cLast = e
+                  continue
+                }
+                if let cl = cLast, let r = cRoot {
+                  let posts = r.post + cMembers.flatMap(\.post)
+                  r.post = []
+                  for m in cMembers { m.post = [] }
+                  cl.post = posts
+                }
+                if let e, e.kind == "note" || e.kind == "rest" { cRoot = e } else { cRoot = nil }
+                cLast = nil; cMembers = []
+                if e == nil { break }
+              }
+              for e in evs {
+                while let d = dirs.first, !(e.kind == "note" && e.chord), d.x <= e.x + 0.5 * L.staves[st.staff].sp {
+                  direction(meas, dirs.removeFirst(), sNo)
+                }
+                let dur = e.kind == "mrest" ? barEnd : e.dur
+                if e.kind == "gap" {
+                  if Q.zero < dur {
+                    let fw = meas.sub("forward")
+                    fw.sub("duration", units(dur)); fw.sub("voice", voiceNo)
+                    if multi { fw.sub("staff", staffNo) }
+                  } else if dur < Q.zero { meas.sub("backup").sub("duration", units(Q.zero - dur)) }
+                  posQ += dur
+                  continue
+                }
+                for d in e.pre { direction(meas, d, sNo) }
+                var voice = voiceNo
+                if e.chord && lastVoice != 0 { voice = lastVoice }
+                else if e.grace == "none" {
+                  voice = freeVoice(voiceNo, at: posQ)
+                  ends[voice] = posQ + dur
+                  lastVoice = voice
+                } else {
+                  // a grace note goes with the voice its main note is about to take
+                  voice = freeVoice(voiceNo, at: posQ)
+                }
+                note(meas, e, units(dur), voice, sNo, wholeRest: !meterShown)
+                for d in e.post { direction(meas, d, sNo) }
+                if !e.chord { posQ += dur }
+              }
+              if vi == 0 && posQ < barEnd && !keepShort {
+                // The rest of a short bar, as a gap: its length is often no single written value (a quarter and
+                // a sixteenth, a third of a beat), which a typeless hidden rest leaves importers to misread.
+                let fv = freeVoice(voiceNo, at: posQ)
+                let fw = meas.sub("forward")
+                fw.sub("duration", units(barEnd - posQ)); fw.sub("voice", fv)
+                if multi { fw.sub("staff", staffNo) }
+                ends[fv] = barEnd
+                posQ = barEnd
+              }
+              maxEnd = max(maxEnd, posQ)
+              for d in dirs { direction(meas, d, sNo) }
+            }
+          }
+          if opening && Q.zero < maxEnd && maxEnd < barLen { meas.set("implicit", "yes") }
+          for (i, s) in staves.enumerated() { if let ec = s?.marks.endClef { lastClefs[i] = ec } }
+          let right = first.marks.right
+          if right != nil || !pendingEndings.isEmpty {
+            let bl = meas.sub("barline", nil, [("location", "right")])
+            if let right { bl.sub("bar-style", barRight[right]!) }
+            for num in pendingEndings { bl.sub("ending", nil, [("number", num), ("type", "stop")]) }
+            if right == "barLine_repeat_end" { bl.sub("repeat", nil, [("direction", "backward")]) }
+            pendingEndings = []
+          }
+        }
+      }
+      var out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+        "<!DOCTYPE score-partwise PUBLIC \"-//Recordare//DTD MusicXML 4.0 Partwise//EN\" \"http://www.musicxml.org/dtds/partwise.dtd\">\n"
+      root.render(into: &out)
+      return out
+    }
+
+    static func direction(_ meas: XE, _ d: Dir, _ staffNo: Int?) {
+      if d.kind == "clef" {
+        let attrs = meas.sub("attributes")
+        let (sign, line, octc) = clefXML[d.payload] ?? ("G", 2, 0)
+        let ce = staffNo.map { attrs.sub("clef", nil, [("number", $0)]) } ?? attrs.sub("clef")
+        ce.sub("sign", sign)
+        if let line { ce.sub("line", line) }
+        if octc != 0 { ce.sub("clef-octave-change", octc) }
+        return
+      }
+      let de = meas.sub("direction", nil, [("placement", d.below ? "below" : "above")])
+      let dt = de.sub("direction-type")
+      switch d.kind {
+      case "dyn": dt.sub("dynamics").sub(d.payload)
+      case "wedge": dt.sub("wedge", nil, [("type", d.payload)])
+      case "octave": dt.sub("octave-shift", nil, [("type", d.payload), ("size", d.size)])
+      case "pedal": dt.sub("pedal", nil, [("type", d.payload), ("line", "yes")])
+      case "segno", "coda": dt.sub(d.kind)
+      default: break
+      }
+      if let staffNo { de.sub("staff", staffNo) }
+    }
+
+    static func note(_ meas: XE, _ e: Event, _ dur: Int, _ voice: Int, _ staffNo: Int?, wholeRest: Bool) {
+      let ne = meas.sub("note")
+      if e.grace != "none" { ne.sub("grace", nil, e.grace == "unacc" ? [("slash", "yes")] : []) }
+      if e.chord { ne.sub("chord") }
+      if e.kind == "rest" || e.kind == "mrest" {
+        ne.sub("rest", nil, e.kind == "mrest" ? [("measure", "yes")] : [])
+      } else if e.unpitched {
+        let up = ne.sub("unpitched")
+        up.sub("display-step", e.step); up.sub("display-octave", e.octave)
+      } else {
+        let p = ne.sub("pitch")
+        p.sub("step", e.step)
+        if e.alter != 0 { p.sub("alter", e.alter) }
+        p.sub("octave", e.octave)
+      }
+      if e.grace == "none" { ne.sub("duration", dur) }
+      if e.tieStop { ne.sub("tie", nil, [("type", "stop")]) }
+      if e.tie { ne.sub("tie", nil, [("type", "start")]) }
+      ne.sub("voice", voice)
+      if e.kind == "mrest" {
+        if wholeRest { ne.sub("type", "whole") }
+      } else {
+        ne.sub("type", e.typ == "256" || e.typ == "512" ? e.typ + "th" : e.typ)
+        for _ in 0..<e.dots { ne.sub("dot") }
+      }
+      if !e.accidental.isEmpty { ne.sub("accidental", e.accidental) }
+      if e.tup != "none" && e.tup != "other" && e.grace == "none" {
+        let an = e.tup.split(separator: "/")
+        let tm = ne.sub("time-modification")
+        tm.sub("actual-notes", an[0]); tm.sub("normal-notes", an[1])
+      }
+      if !e.stem.isEmpty && e.kind == "note" { ne.sub("stem", e.stem) }
+      if let staffNo { ne.sub("staff", staffNo) }
+      for (level, val) in e.beams { ne.sub("beam", val, [("number", level)]) }
+      var nots: [(String, [(String, Any)])] = []
+      if e.tieStop { nots.append(("tied", [("type", "stop")])) }
+      if e.tie { nots.append(("tied", [("type", "start")])) }
+      for (typ, num) in e.slurs { nots.append(("slur", [("type", typ), ("number", num)])) }
+      if !e.tupletMark.isEmpty { nots.append(("tuplet", [("type", e.tupletMark)])) }
+      if e.arpeggiate { nots.append(("arpeggiate", [])) }
+      let arts = e.marks.compactMap { lookup(artic, $0) } + e.marks.compactMap { lookup(afterMark, $0) }
+      let techs = e.marks.compactMap { lookup(tech, $0) }
+      let orns = e.marks.compactMap { lookup(ornament, $0) }
+      let ferm = e.marks.contains("fermata")
+      if !nots.isEmpty || !arts.isEmpty || !techs.isEmpty || ferm || !orns.isEmpty {
+        let nn = ne.sub("notations")
+        for (tag, at) in nots { nn.sub(tag, nil, at) }
+        if !orns.isEmpty { let oe = nn.sub("ornaments"); for o in orns { oe.sub(o) } }
+        if !arts.isEmpty { let ae = nn.sub("articulations"); for a in arts { ae.sub(a) } }
+        if !techs.isEmpty { let te = nn.sub("technical"); for t in techs { te.sub(t) } }
+        if ferm { nn.sub("fermata") }
+      }
+    }
+  }
+}

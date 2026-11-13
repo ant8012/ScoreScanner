@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+reports/
+# Staged by tools/prepare_player.py (GPL-3.0 player, fetched rather than vendored)
+App/SampleAssets/Player/
+# Local sample page, not redistributed
+App/SampleAssets/sample.jpg
