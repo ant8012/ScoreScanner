@@ -40,7 +40,7 @@ KINDS = [
     ("Δ", "major-seventh"), ("ø", "half-diminished"), ("6/9", "major-sixth"), ("m6/9", "minor-sixth"), ("7(#11)", "dominant"),
 ]
 COMMON = ["", "m", "7", "maj7", "m7", "m7b5", "6", "9", "-7", "Δ7", "7(b9)", "sus4", "13", "mi7", "MI7", "MA7", "mi",
-          "7(#9#5)", "7(b9#5)", "6/9"]
+          "7(#9#5)", "7(b9#5)", "6/9", "ma7", "mi9", "mi(b5)"]
 ARTICULATIONS = ['<accent placement="above"/>', '<strong-accent placement="above" type="up"/>',
                  '<staccato placement="above"/>', '<tenuto placement="above"/>', '<staccatissimo placement="above"/>',
                  '<strong-accent placement="above" type="up"/>']
@@ -67,7 +67,10 @@ CHORD_FONTS = ["Edwin", "FreeSerif", "FreeSans", "MuseJazz Text", "Petaluma Text
                "Courier New", "Didot", "Noteworthy", "Marker Felt", "Bradley Hand", "Chalkboard SE", "Comic Sans MS",
                # LilyJAZZ (OpenLilyPondFonts, OFL), Real Book style; install it in ~/Library/Fonts, or MuseScore
                # silently falls back to a default font
-               "lilyjazz-chord", "lilyjazz-text"]
+               "lilyjazz-chord", "lilyjazz-text",
+               # small capitals: lowercase quality letters print as small capitals after a full-size root (Cmi7 ->
+               # C + small MI + 7), the New Real Book look
+               "Copperplate", "Bodoni 72 Smallcaps"]
 MUSIC_FONTS = [("Leland", "Leland Text"), ("Bravura", "Bravura Text"), ("Petaluma", "Petaluma Text"),
                ("Finale Maestro", "Finale Maestro Text"), ("Gootville", "Gootville Text"),
                ("Finale Broadway", "Finale Broadway Text")]

@@ -120,6 +120,15 @@ def augment(im, rng):
     if rng.random() < 0.4:
         im = im.filter(ImageFilter.GaussianBlur(rng.uniform(0.3, 1.3)))
     a = np.asarray(im).astype(np.float32)
+    if rng.random() < 0.25:                                  # uneven light: a photo's brightness gradient
+        h, w = a.shape
+        lo = rng.uniform(0.55, 0.9)
+        ramp = np.linspace(lo, 1.0, w if rng.random() < 0.6 else h)
+        if rng.random() < 0.5:
+            ramp = ramp[::-1]
+        shade = ramp[None, :] if ramp.size == w else ramp[:, None]
+        a = 255 - (255 - a) * 1.0                              # keep ink, darken paper unevenly
+        a = a * shade + (1 - shade) * rng.uniform(0, 40)
     if rng.random() < 0.35:                                  # grey paper, faded ink
         bg, ink = rng.uniform(190, 255), rng.uniform(0, 90)
         a = ink + (bg - ink) * (a / 255.0)

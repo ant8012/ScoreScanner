@@ -1,7 +1,8 @@
 # Chord finder (prototype)
 
 Finds each chord symbol above a staff as its own box, with its bar and beat, using copisteria's symbol boxes to
-erase the music first. Python prototype; nothing here runs in the app yet.
+erase the music first. The finder now also runs in ScannerCore (`ChordFinder.swift`, on every scan as
+`ScanResult.chordWords`), ported rule for rule from `find.py`; `finder_parity.py` checks the two agree.
 
 | Script | What it does |
 | --- | --- |
@@ -15,6 +16,7 @@ erase the music first. Python prototype; nothing here runs in the app yet.
 | `pdf_truth.py` | Exact chord boxes from PDFs whose chord symbols are real text (Sibelius writes one text object per chord, in a chord font), and scores the finder against them. Used with The Public Domain Song Anthology (CC0, two chord rows per staff). |
 | `read_text.py CROPS [--truth T]` | Turns a `pcc-cat` reading into chords and staff text: joins the pieces of one direction (D.S. + al Coda), keeps a rehearsal mark only with a box around it, adds segno and coda signs from copisteria. |
 | `ocr_bench.py MODEL CROPS ROUTE` | Reads crops with a PaddleOCR text recogniser (PP-OCRv6 tiny/small/medium), no language model; a reading is a chord when it parses as one. |
+| `finder_parity.py SCANNERCHECK --dir PAGES COP` | Runs `ScannerCheck --chordfind` (the Swift finder) and `find.py` on the same pages and compares every box, kind, bar, beat and anchor. |
 | `vlm_bench.py` | Reads exported crops with a local vision-language model through MLX-VLM (tested: LiquidAI LFM3-VL-2B). |
 
 Copisteria's inputs come from `ScannerCheck --copista PAGE MODELS OUT` (`layout.json`, `tok.json`, `dets.json`).
@@ -211,3 +213,25 @@ Private Cloud Compute on the same crops (two New Real Book pages it finished bef
 cloud 114, round 2 105, round 1 102, untrained 81. On the three real charts round 2 reads 118/130 with no false
 chords (cloud 125, 4 false). The gap left is mostly the New Real Book's small-capital MI/MA, which MuseScore
 cannot render.
+
+### Swift finder (ScannerCore)
+
+`ChordFinder.swift` is a rule-for-rule port of `find.py`, including Python's tie-breaking (stable sorts, first
+minimum/maximum), scipy's raster-order component labels, numpy's linear percentile and round-half-to-even.
+`Scanner.scan` runs it on copisteria's reading in memory and returns the words as `ScanResult.chordWords`
+(~10 ms a page on a Mac). Parity with `find.py` (`finder_parity.py`): 280 pages, 20,944 proposals, all identical
+(the 20 real test pages, 110 generated sheets in every style, 150 anthology pages); the in-scan run matches the
+run from dumped files.
+
+Round 3 (full3): small capitals without drawing (Copperplate and Bodoni 72 Smallcaps print lowercase quality letters
+as small capitals after a full-size root, the New Real Book look; one batch of 67 sheets in only these two), more
+book spellings (ma7, mi9, mi(b5)), uneven-light augmentation; 941 sheets + anthology, 55,193 crops.
+
+| 768 test chords | Exact | Root | False chords |
+| --- | --- | --- | --- |
+| Round 2 (full2) | 652 | 686 | 25 |
+| Round 3 (full3) | 651 | 704 | 30 |
+
+On the two New Real Book pages Private Cloud Compute read (127 chords): cloud 114 exact / 120 root / 6 false;
+round 3 114 / 118 / 5 (round 2: 105 / 109 / 5). A Sleepin' Bee 61 -> 68 of 77, equal to the cloud. Overall exact is
+flat: Real Book set 2 dropped 190 -> 187 and its false chords rose 14 -> 18.

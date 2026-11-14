@@ -17,6 +17,9 @@ public struct ScanResult: Sendable {
   public let pageWidth: Int, pageHeight: Int
   public let seconds: Double
   public let repairedMeasures: Int
+  /// The text above each staff cut into word boxes, each with its bar and beat (`ChordFinder`): the chord
+  /// symbols to read, and where in the bar each one falls.
+  public var chordWords: [ChordFinder.Proposal] = []
 }
 
 /// Reads a page with copisteria (copista-2m): its detector and evidence models as ONNX, and its front end,
@@ -58,9 +61,13 @@ public enum Scanner {
         voice: s.part, system: s.system, grandStaff: s.grandStaff,
         geometry: (try? JSONSerialization.data(withJSONObject: geometry)) ?? Data("{}".utf8))
     }
+    progress("Finding chord symbols")
+    let chordWords = ChordFinder.find(
+      gray: page.pixels, width: page.width, height: page.height, layout: ChordFinder.layout(read.reading))
     return ScanResult(
       xml: xml, rawXML: xml, staffs: staffs, page: Data(page.pixels), pageWidth: page.width,
-      pageHeight: page.height, seconds: Date().timeIntervalSince(start), repairedMeasures: 0)
+      pageHeight: page.height, seconds: Date().timeIntervalSince(start), repairedMeasures: 0,
+      chordWords: chordWords)
   }
 
   /// The meter a page's score ends in, for `scan(carriedMeter:)` on the next page.

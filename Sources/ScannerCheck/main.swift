@@ -6,6 +6,8 @@ import ScannerCore
 //   --scan-image IMAGE MODELS OUT.xml   one page image to MusicXML, as the app reads it
 //   --scan-pdf PDF MODELS OUT.xml       a whole PDF, pages joined
 //   --chord-crops IMAGE MODELS OUTDIR   the chord strips the app sends for reading, one PGM per bar
+//   --chordfind IMAGE COPISTA_DIR OUT.json   the chord finder's word boxes, bars and beats for one page, from the
+//                                            layout.json and tok.json --copista wrote (parity with find.py)
 
 func writeChordCrops(image: Data, models: URL, output: URL) throws {
     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -29,7 +31,8 @@ func writeChordCrops(image: Data, models: URL, output: URL) throws {
 do {
     let arguments = CommandLine.arguments
     guard arguments.count == 5 else {
-        throw ScannerError.invalid("Usage: ScannerCheck --copista|--scan-image|--scan-pdf|--chord-crops INPUT MODELS OUTPUT")
+        throw ScannerError.invalid(
+            "Usage: ScannerCheck --copista|--scan-image|--scan-pdf|--chord-crops|--chordfind INPUT MODELS OUTPUT")
     }
     let input = URL(fileURLWithPath: arguments[2]), models = URL(fileURLWithPath: arguments[3])
     let output = URL(fileURLWithPath: arguments[4])
@@ -44,6 +47,10 @@ do {
         let result = try PDFScanner.scan(data: Data(contentsOf: input), models: models) { print($0) }
         try result.xml.write(to: output)
         print("PDF PASS: \(result.pageCount) pages, \(result.staffCount) staffs, \(result.seconds)s")
+    case "--chordfind-scan":
+        print(try ChordFinderInspect.runScan(image: input, models: models, output: output))
+    case "--chordfind":
+        print(try ChordFinderInspect.run(image: input, copista: models, output: output))
     case "--chord-crops":
         try writeChordCrops(image: Data(contentsOf: input), models: models, output: output)
     default:
