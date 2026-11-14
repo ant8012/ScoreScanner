@@ -72,12 +72,43 @@ def score(truth, predicted):
     return out
 
 
-def from_crops(manifest, results):
+QUALITY = ["maj", "MAJ", "Maj", "ma", "min", "mi", "dim", "aug", "alt", "sus", "add", "m", "M", "-", "+", "o", "ø",
+           "Δ", "°"]
+
+
+def is_chord(text):
+    """A strict chord grammar: a root, then only chord vocabulary, then an optional slash bass. Words like Bossa,
+    Fine or Coda fail; a lyric that happens to be a chord (Am) still passes."""
+    s = (text or "").strip().replace(" ", "").replace("♭", "b").replace("♯", "#")
+    s = s.translate(str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉⁺⁻", "01234567890123456789+-"))
+    if re.fullmatch(r"N\.?C\.?", s, re.I):
+        return True
+    m = re.match(r"^[A-G][b#]?", s)
+    if not m:
+        return False
+    rest = s[m.end():]
+    bass = re.search(r"/[A-G][b#]?$", rest)
+    if bass:
+        rest = rest[: bass.start()]
+    while rest:
+        for q in QUALITY:
+            if rest.startswith(q):
+                rest = rest[len(q):]
+                break
+        else:
+            if rest[0] in "0123456789b#(),/":
+                rest = rest[1:]
+            else:
+                return False
+    return True
+
+
+def from_crops(manifest, results, grammar=False):
     items = {m["id"]: m for m in json.load(open(manifest))}
     res = json.load(open(results))
     got = {}
     for r in sorted(res["results"], key=lambda r: (items[r["id"]]["chart"], items[r["id"]]["line"], items[r["id"]]["x0"])):
-        if r.get("isChord") and (r.get("chord") or "").strip():
+        if r.get("isChord") and (r.get("chord") or "").strip() and (not grammar or is_chord(r["chord"])):
             got.setdefault(items[r["id"]]["chart"], []).append(r["chord"])
     return got, res
 
@@ -116,7 +147,7 @@ def from_xml(pairs):
 if __name__ == "__main__":
     truth = json.load(open(sys.argv[1]))
     if sys.argv[2] == "crops":
-        got, res = from_crops(sys.argv[3], sys.argv[4])
+        got, res = from_crops(sys.argv[3], sys.argv[4], grammar="--grammar" in sys.argv)
         print(f"route {res['route']}: {res['seconds']:.1f} s, {res['requests']} requests, {res['failed']} failed")
     else:
         got = from_xml(sys.argv[3:])

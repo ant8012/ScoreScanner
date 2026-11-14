@@ -22,8 +22,10 @@ P = dict(
     stem_h=2.0, stem_w=0.4,
     ledger_h=0.35, ledger_w=1.1,
     long_w=3.0,
-    gap=0.24,          # word break: horizontal gap, as a fraction of the line's letter height
+    gap=0.2,           # word break: horizontal gap, as a fraction of the line's letter height
+    letter_pct=75,     # letter height = this percentile of piece heights over 0.6 sp
     root_gap=0.8,      # a lone capital joins the next word within this many letter heights
+    trail_gap=0.8,     # a small or accidental piece joins the word before it within this many letter heights
     overlap=0.25,      # same line: vertical overlap as a fraction of the smaller height
 )
 
@@ -52,10 +54,14 @@ def components(mask, sp, p):
         y0, y1, x0, x1 = sl[0].start, sl[0].stop, sl[1].start, sl[1].stop
         h, w, area = y1 - y0, x1 - x0, int(comp.sum())
         c = dict(x0=x0, y0=y0, x1=x1, y1=y1, area=area, id=i)
+        # Enclosed white regions: a sharp or flat has one, as do b, 6, 9, A, B, D; C, E, F, G and 7 have none.
+        if h <= 4 * sp and w <= 4 * sp:
+            bg, nb = ndi.label(np.pad(~comp, 1, constant_values=True))
+            c["holes"] = sum(1 for j in range(1, nb + 1) if not (bg[0] == j).any() and (bg == j).sum() >= 3)
         if area < p["speck"] * sp * sp:
             continue
         if h >= p["stem_h"] * sp and w <= p["stem_w"] * sp:
-            c["why"] = "stem"
+            c["thin"] = True                 # a stem if it hangs off a notehead (decided by the caller)
         elif h <= p["ledger_h"] * sp and p["ledger_w"] * sp <= w <= 3.5 * sp:
             c["why"] = "ledger"
         elif frame(comp, sp):
@@ -73,7 +79,10 @@ def words(comps, sp, p):
     """Group letters into lines (vertical overlap), then lines into words (horizontal gaps)."""
     comps = sorted(comps, key=lambda c: c["x0"])
     heights = [c["y1"] - c["y0"] for c in comps]
-    letter = float(np.median([h for h in heights if h > 0.6 * sp] or [1.5 * sp]))
+    # Letter height from the larger letters: lyrics and other small text above a staff would otherwise drag a
+    # median down to lowercase height and shrink every gap measured in letters (Beast of Burden: 23 px -> 10 px).
+    tall = [h for h in heights if h > 0.6 * sp] or [1.5 * sp]
+    letter = p.get("_letter") or float(np.percentile(tall, p.get("letter_pct", 50)))
     gap = p["gap"] * letter
     # Each piece joins the word it overlaps most, judged against the whole word so far (capital root included):
     # a raised "4" in sus4 barely overlaps the lowercase "s" beside it but sits inside the height of "Gsus".
@@ -114,6 +123,46 @@ def words(comps, sp, p):
                     groups.remove(g)
                     merged = True
                     break
+    # A trailing piece belongs to the chord before it: a raised or small extension (b9, 7-5, #11) or a lone
+    # accidental after a slash bass (B/D #). Copyists set these a little apart. Only pieces smaller than a letter,
+    # or a single narrow glyph with a loop (# or b), join; a lone capital such as C, E, F or G never does.
+    trail_gap = p.get("trail_gap", 0) * letter
+    if trail_gap:
+        groups.sort(key=lambda g: g["x0"])
+        merged = True
+        while merged:
+            merged = False
+            for g in groups:
+                h, w = g["y1"] - g["y0"], g["x1"] - g["x0"]
+                small = h <= 0.8 * letter and w <= 2.0 * letter
+                # a sharp or flat: one glyph with a loop, about twice as tall as wide (capitals with loops, A B D,
+                # are nearer square)
+                accidental = (len(g["parts"]) <= 2 and h >= 1.6 * w and w <= 0.8 * letter
+                              and (len(g["parts"]) == 2 or g["parts"][0].get("holes", 0) >= 1))
+                short = w <= 2.0 * letter
+                if not (small or accidental or short):
+                    continue
+
+                def fits(o):
+                    if o is g or not (0 <= g["x0"] - o["x1"] <= trail_gap):
+                        return False
+                    oh = o["y1"] - o["y0"]
+                    if oh < 0.7 * letter or o["x1"] - o["x0"] < 0.5 * letter:
+                        return False                 # the chord before is at least a letter
+                    # an extension written raised: its foot clearly above the chord's
+                    raised = short and g["y1"] <= o["y1"] - 0.25 * oh and g["y0"] >= o["y0"] - 0.8 * letter
+                    level = (small or accidental) and g["y0"] >= o["y0"] - 0.6 * letter and \
+                        g["y1"] <= o["y1"] + 0.3 * letter and g["y1"] >= o["y0"] + 0.2 * oh
+                    return raised or level
+
+                prev = [o for o in groups if fits(o)]
+                if prev:
+                    o = max(prev, key=lambda o: o["x1"])
+                    o["parts"] += g["parts"]
+                    o.update(x1=max(o["x1"], g["x1"]), y0=min(o["y0"], g["y0"]), y1=max(o["y1"], g["y1"]))
+                    groups.remove(g)
+                    merged = True
+                    break
     out = []
     for g in (g["parts"] for g in groups):
         out.append(dict(x0=min(c["x0"] for c in g), y0=min(c["y0"] for c in g), x1=max(c["x1"] for c in g),
@@ -129,8 +178,12 @@ def find(gray, layout, tok, p=P):
     # fermata, each with high confidence), so only notes it placed in a voice, and the accidentals and dots beside
     # them, are erased there. Everything else above the staff stays as possible text for the reader to reject.
     def above(s):
+        """Outside its staff: above it, or below it in the gap before the next staff. Copisteria attributes text in
+        the gap to either staff (a handwritten b9 came back as a flat and an mp under the line above)."""
         st = layout["staves"][s["staff"]] if s.get("staff") is not None and s["staff"] >= 0 else None
-        return st is not None and s["box"][3] < st["y0"] - 0.3 * st["sp"]
+        if st is None:
+            return False
+        return s["box"][3] < st["y0"] - 0.3 * st["sp"] or (p.get("gap_below", True) and s["box"][1] > st["y1"] + 0.3 * st["sp"])
 
     def real(i):
         return tok.get(str(i), {}).get("real", 1.0) or 0.0
@@ -173,6 +226,7 @@ def find(gray, layout, tok, p=P):
 
     staves = sorted(range(len(layout["staves"])), key=lambda k: layout["staves"][k]["y0"])
     proposals = []
+    two_rows = False
     prev_bottom = 0
     for order, k in enumerate(staves):
         st = layout["staves"][k]
@@ -190,6 +244,13 @@ def find(gray, layout, tok, p=P):
         # A thin sliver touching a notehead is what is left of its stem once the head is erased; chord symbols
         # never touch noteheads.
         for c in comps:
+            if c.pop("thin", False):
+                gx0, gx1, gy0, gy1 = c["x0"] + left, c["x1"] + left, c["y0"] + top, c["y1"] + top
+                near_head = any(h[0] - 0.5 * sp <= gx1 and gx0 <= h[2] + 0.5 * sp and h[1] - 4 * sp <= gy1
+                                and gy0 <= h[3] + 4 * sp for h in heads)
+                if near_head or c["y1"] >= region.shape[0] - 1 or c["y0"] <= 0 or not p.get("free_strokes", True):
+                    c["why"] = "stem"
+                    continue
             if "why" in c or c["x1"] - c["x0"] > 0.45 * sp:
                 continue
             # A sliver cut by the bottom of the region continues into this staff, and one cut by the top hangs from
@@ -202,8 +263,13 @@ def find(gray, layout, tok, p=P):
                    for h in heads):
                 c["why"] = "stem"
         kept = [c for c in comps if "why" not in c and not any(inside(c, f) for f in frames)]
+        # Letter height from the band chords stand in, a few spaces above this staff, so the lyrics of the line
+        # above (lowercase, and often more numerous) don't set it.
+        band = [c["y1"] - c["y0"] for c in kept if (c["y1"] - c["y0"]) > 0.6 * sp
+                and (st["y0"] - top) - (c["y0"] + c["y1"]) / 2 <= p.get("chord_band", 7) * sp]
+        wp = dict(p, _letter=float(np.percentile(band, p.get("letter_pct", 50)))) if band else p
         found = []
-        for wd in words(kept, sp, p):
+        for wd in words(kept, sp, wp):
             found.append(dict(wd, x0=wd["x0"] + left, x1=wd["x1"] + left, y0=wd["y0"] + top, y1=wd["y1"] + top,
                               staff=k, order=order, kind="text"))
         # Nothing before the music starts is a chord: bar numbers, part names.
@@ -214,6 +280,15 @@ def find(gray, layout, tok, p=P):
         for w in found:
             if (w["x0"] + w["x1"]) / 2 < first - 1.5 * sp:
                 w["kind"] = "dropped:before-music"
+        # Text belongs to the staff it sits closest to: lyrics hang below the line above, chords stand on this one.
+        if order > 0 and p.get("lyrics", True):
+            above_bottom = layout["staves"][staves[order - 1]]["y1"]
+            for w in found:
+                if w["kind"] != "text":
+                    continue
+                c = (w["y0"] + w["y1"]) / 2
+                if c - above_bottom < 0.6 * (st["y0"] - c):
+                    w["kind"] = "dropped:line-above"
         # Chord symbols are the lowest row of text over the staff; tempo, style and rehearsal words sit above them.
         if p.get("stack", True):
             solid = [w for w in found if w["kind"] == "text" and w["y1"] - w["y0"] >= max(0.6 * letter, 1.0 * sp)
@@ -226,10 +301,37 @@ def find(gray, layout, tok, p=P):
                     if ov >= 0.3 * min(a["x1"] - a["x0"], b["x1"] - b["x0"]):
                         a["kind"] = "dropped:stacked"
                         break
+            # ...unless the upper words form a row of their own across the line: a second chord row (alternate
+            # changes, as in The Public Domain Song Anthology), not a lone tempo or style phrase.
+            edges = list(st["bars"]) + [st["x1"]]
+
+            def bar_of(w):
+                x = (w["x0"] + w["x1"]) / 2
+                return max([b for b in range(len(edges) - 1) if x >= edges[b]] or [0])
+
+            rows = []
+            for w in sorted((w for w in found if w["kind"] in ("text", "dropped:stacked")), key=lambda w: w["y1"]):
+                if rows and abs(w["y1"] - rows[-1][-1]["y1"]) <= 0.5 * letter:
+                    rows[-1].append(w)
+                else:
+                    rows.append([w])
+            for row in rows:
+                if any(w["kind"] == "dropped:stacked" for w in row) and len(row) >= 3 and len({bar_of(w) for w in row}) >= 2:
+                    two_rows = True
+                    for w in row:
+                        if w["kind"] == "dropped:stacked":
+                            w["kind"] = "text"
+                        w["row"] = "upper"
         proposals.extend(found)
         for f in frames:
             proposals.append(dict(x0=f["x0"] + left, x1=f["x1"] + left, y0=f["y0"] + top, y1=f["y1"] + top,
                                   staff=k, order=order, kind="rehearsal"))
+    # A page that prints a second chord row on one line prints it wherever it has alternate changes, even a single
+    # chord, so its stacked words are kept everywhere.
+    if two_rows:
+        for pr in proposals:
+            if pr["kind"] == "dropped:stacked":
+                pr["kind"], pr["row"] = "text", "upper"
     anchor = p.get("anchor", "auto")
     if anchor == "auto":
         anchor = page_anchor([q for q in proposals if q["kind"] == "text"], layout, tok)
