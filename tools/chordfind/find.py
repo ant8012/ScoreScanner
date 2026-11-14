@@ -184,6 +184,29 @@ def words(comps, sp, p):
                     groups.remove(g)
                     merged = True
                     break
+    # A bass note written under its chord like a fraction (Dbma7(#11#5) over C) joins it: a narrow piece
+    # touching the bottom of the chord above, under its right part. A second chord row is set apart from the first
+    # and lines up with it on the left, so it never qualifies.
+    if p.get("stack_join", True):
+        merged = True
+        while merged:
+            merged = False
+            for g in sorted(groups, key=lambda g: g["y0"]):
+                gw, gh = g["x1"] - g["x0"], g["y1"] - g["y0"]
+                # a bass note is a capital, wider than a triplet's "3" (under 0.6 letter) or a stacked 9
+                if gw > 1.4 * letter or gw < 0.9 * letter or gh < 0.3 * letter:
+                    continue
+                # it touches the chord above; a crowded second chord tucked below-right overlaps it by a third
+                over = [o for o in groups if o is not g and o["x1"] - o["x0"] >= letter
+                        and o["y0"] < g["y0"] and -0.2 * letter <= g["y0"] - o["y1"] <= 0.15 * letter
+                        and g["x0"] >= o["x0"] + 0.8 * letter and g["x1"] <= o["x1"] + 0.6 * letter]
+                if over:
+                    o = max(over, key=lambda o: o["y1"])
+                    o["parts"] += g["parts"]
+                    o.update(x1=max(o["x1"], g["x1"]), y1=max(o["y1"], g["y1"]))
+                    groups.remove(g)
+                    merged = True
+                    break
     out = []
     for g in (g["parts"] for g in groups):
         out.append(dict(x0=min(c["x0"] for c in g), y0=min(c["y0"] for c in g), x1=max(c["x1"] for c in g),
@@ -325,6 +348,14 @@ def find(gray, layout, tok, p=P):
         starts = [(s["box"][0] + s["box"][2]) / 2 for s in layout["syms"]
                   if s.get("staff") == k and s["cls"].startswith(("note", "rest"))]
         first = min(starts) if starts else st["x0"]
+        if p.get("music_start", "header") == "header":
+            # The music starts after the clef, key and time signature, or at the start of the staff when a line has
+            # none. The first note found is too late when a line opens on rhythm slashes or a bar rest copisteria
+            # does not see (New Real Book "Compared to What", Swedish Pastry: the first chord was dropped).
+            head = [s["box"][2] for s in layout["syms"] if s.get("staff") == k
+                    and s["cls"].startswith(("clef", "keySig", "meterSig", "timeSig"))
+                    and st["x0"] - 3 * sp <= s["box"][0] <= st["x0"] + 12 * sp]
+            first = min(first, max(head) + 0.5 * sp if head else st["x0"] + 1.0 * sp)
         letter = float(np.median([w["y1"] - w["y0"] for w in found] or [1.5 * sp]))
         for w in found:
             if (w["x0"] + w["x1"]) / 2 < first - 1.5 * sp:
