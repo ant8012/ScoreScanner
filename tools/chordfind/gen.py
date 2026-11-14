@@ -4,11 +4,16 @@ Each sheet is written twice by MuseScore from the same MusicXML: once in black (
 every chord symbol in its own colour (the answer key). The colours never change layout, so the coloured pixels of
 chord i are exactly where chord i is printed in the black page.
 
-usage: python3.12 gen.py OUT_DIR COUNT [SEED]
+usage: python3.12 gen.py OUT_DIR COUNT [SEED] [--variety] [--fonts "Font A,Font B"]
+
+--variety gives every sheet its own look, for training a chord reader: a random chord font (MuseScore's text fonts
+and the Mac's handwriting-like fonts), size, bold or italic, extension size and height, stacked alterations,
+fraction-style bass notes, left or centred chords, music font and resolution.
 """
 
 import json
 import random
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +30,14 @@ KINDS = [
     ("m6", "minor-sixth"), ("9", "dominant-ninth"), ("13", "dominant-13th"), ("m9", "minor-ninth"),
     ("maj9", "major-ninth"), ("7(b9)", "dominant"), ("7(#11)", "dominant"), ("7(#9)", "dominant"),
     ("7alt", "dominant"), ("6/9", "major-sixth"), ("add9", "major"), ("+", "augmented"), ("7(b13)", "dominant"),
+    # spellings real fakebooks use
+    ("mi7", "minor-seventh"), ("MI7", "minor-seventh"), ("MA7", "major-seventh"), ("min7", "minor-seventh"),
+    ("mi", "minor"), ("-7b5", "half-diminished"), ("°7", "diminished-seventh"), ("dim7", "diminished-seventh"),
+    ("7b9", "dominant"), ("7#9", "dominant"), ("7#5", "augmented-seventh"), ("7(#9#5)", "dominant"),
+    ("7(b9#5)", "dominant"), ("maj7(#11)", "major-seventh"), ("9sus4", "suspended-fourth"), ("7sus", "suspended-fourth"),
+    ("13(b9)", "dominant-13th"), ("9(#11)", "dominant-ninth"), ("m(maj7)", "major-minor"), ("11", "dominant-11th"),
+    ("m11", "minor-11th"), ("-9", "minor-ninth"), ("maj9(#11)", "major-ninth"), ("7b5", "dominant"), ("sus", "suspended-fourth"),
+    ("Δ", "major-seventh"), ("ø", "half-diminished"), ("6/9", "major-sixth"), ("m6/9", "minor-sixth"), ("7(#11)", "dominant"),
 ]
 COMMON = ["", "m", "7", "maj7", "m7", "m7b5", "6", "9", "-7", "Δ7", "7(b9)", "sus4", "13"]
 
@@ -41,6 +54,41 @@ STYLES = {
 <titleFontFace>MuseJazz Text</titleFontFace><rehearsalMarkFontFace>MuseJazz Text</rehearsalMarkFontFace>
 <staffTextFontFace>MuseJazz Text</staffTextFontFace><tempoFontFace>MuseJazz Text</tempoFontFace>""",
 }
+
+
+# Text fonts MuseScore can draw chord symbols in: its own, and the Mac's (several look handwritten).
+CHORD_FONTS = ["Edwin", "FreeSerif", "FreeSans", "MuseJazz Text", "Petaluma Text", "Petaluma Script", "Campania",
+               "Finale Broadway Text", "Finale Maestro Text", "Gootville Text", "MScore Text", "Leland Text",
+               "Arial", "Arial Narrow", "Helvetica", "Times New Roman", "Georgia", "Futura", "Avenir Next", "Gill Sans",
+               "Courier New", "Didot", "Noteworthy", "Marker Felt", "Bradley Hand", "Chalkboard SE", "Comic Sans MS"]
+MUSIC_FONTS = [("Leland", "Leland Text"), ("Bravura", "Bravura Text"), ("Petaluma", "Petaluma Text"),
+               ("Finale Maestro", "Finale Maestro Text"), ("Gootville", "Gootville Text"),
+               ("Finale Broadway", "Finale Broadway Text")]
+
+
+def variety_style(rng):
+    """A random look for one sheet: the .mss body and a short description."""
+    font = rng.choice(CHORD_FONTS)
+    music, music_text = rng.choice(MUSIC_FONTS)
+    jazz = rng.random() < 0.4
+    look = dict(font=font, music=music, jazz=jazz, size=rng.choice([9, 10, 10, 11, 12, 13, 14]),
+                style=rng.choice([0, 0, 0, 1, 2]),              # normal, bold, italic
+                ext_mag=round(rng.uniform(0.7, 1.0), 2), ext_adj=round(rng.uniform(-2.5, 0.0), 1),
+                mod_mag=round(rng.uniform(0.7, 1.0), 2), mod_adj=round(rng.uniform(-2.0, 0.0), 1),
+                stack=rng.random() < 0.25, stagger=rng.random() < 0.2, left=rng.random() < 0.35,
+                spatium=round(rng.uniform(1.5, 2.0), 3))
+    body = (f"<musicalSymbolFont>{music}</musicalSymbolFont><musicalTextFont>{music_text}</musicalTextFont>"
+            + ("<chordStyle>jazz</chordStyle><chordsXmlFile>chords_jazz.xml</chordsXmlFile>" if jazz else "")
+            + f"<chordSymbolAFontFace>{font}</chordSymbolAFontFace><chordSymbolBFontFace>{font}</chordSymbolBFontFace>"
+            + f"<chordSymbolAFontSize>{look['size']}</chordSymbolAFontSize>"
+            + f"<chordSymbolAFontStyle>{look['style']}</chordSymbolAFontStyle>"
+            + f"<chordExtensionMag>{look['ext_mag']}</chordExtensionMag><chordExtensionAdjust>{look['ext_adj']}</chordExtensionAdjust>"
+            + f"<chordModifierMag>{look['mod_mag']}</chordModifierMag><chordModifierAdjust>{look['mod_adj']}</chordModifierAdjust>"
+            + f"<verticallyStackModifiers>{int(look['stack'])}</verticallyStackModifiers>"
+            + f"<chordBassNoteStagger>{int(look['stagger'])}</chordBassNoteStagger>"
+            + (f"<chordSymPosition>left</chordSymPosition>" if look["left"] else "")
+            + f"<spatium>{look['spatium']}</spatium>")
+    return body, look
 
 
 def colour(i):
@@ -69,11 +117,21 @@ def harmony_xml(c, rgb):
     root = f"<root><root-step>{c['step']}</root-step>" + (
         f"<root-alter>{c['alter']}</root-alter>" if c["alter"] else "") + "</root>"
     kind = f'<kind text="{c["text"]}">{c["kind"]}</kind>' if c["text"] else f'<kind text="">{c["kind"]}</kind>'
+    # Alterations and added tones as MusicXML degrees: MuseScore drops them when they are only in the kind's text.
+    degrees = ""
+    if c["kind"] not in ("half-diminished",):
+        for acc, num in re.findall(r"([b#])(5|9|11|13)", c["text"]):
+            alter = -1 if acc == "b" else 1
+            typ = "alter" if num == "5" else "add"
+            if num == "5" and c["kind"] == "augmented-seventh":
+                continue
+            degrees += (f"<degree><degree-value>{num}</degree-value><degree-alter>{alter}</degree-alter>"
+                        f"<degree-type>{typ}</degree-type></degree>")
     bass = ""
     if c["bass"]:
         bass = f"<bass><bass-step>{c['bass'][0]}</bass-step>" + (
             f"<bass-alter>{c['bass'][1]}</bass-alter>" if c["bass"][1] else "") + "</bass>"
-    return f"<harmony{attrs}>{root}{kind}{bass}</harmony>"
+    return f"<harmony{attrs}>{root}{kind}{bass}{degrees}</harmony>"
 
 
 # Rhythm patterns in eighths for 4/4 and 3/4 (negative = rest).
@@ -200,10 +258,43 @@ def sheet(rng, index):
     return meta, xml(False), xml(True)
 
 
+FIFTHS = "FCGDAEB"
+
+
+def tpc_name(tpc):
+    """MuseScore's tonal pitch class (14 = C, one step per fifth) as a note name."""
+    t = int(tpc) - 13
+    return FIFTHS[t % 7] + {-2: "bb", -1: "b", 0: "", 1: "#", 2: "##"}[t // 7]
+
+
+def printed_chords(mscx):
+    """The chords as MuseScore stored them after reading the MusicXML (root, quality text, bass), in score order:
+    what it prints, whatever the MusicXML asked for."""
+    out = []
+    for h in re.findall(r"<harmonyInfo>(.*?)</harmonyInfo>", Path(mscx).read_text(), re.S):
+        name = re.search(r"<name>(.*?)</name>", h, re.S)
+        root = re.search(r"<root>(-?\d+)</root>", h)
+        bass = re.search(r"<bass>(-?\d+)</bass>", h)
+        if not root:
+            out.append(None)
+            continue
+        text = tpc_name(root.group(1)) + (name.group(1) if name else "")
+        if bass:
+            text += "/" + tpc_name(bass.group(1))
+        out.append(text.replace("&amp;", "&"))
+    return out
+
+
 def main():
-    out = Path(sys.argv[1])
-    count = int(sys.argv[2])
-    seed = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+    skip = {i + 1 for i, a in enumerate(sys.argv) if a == "--fonts"}
+    args = [a for i, a in enumerate(sys.argv) if i > 0 and i not in skip and not a.startswith("--")]
+    variety = "--variety" in sys.argv
+    if "--fonts" in sys.argv:
+        # --fonts replaces the chord fonts --variety picks from (e.g. only handwriting-style fonts)
+        CHORD_FONTS[:] = [f.strip() for f in sys.argv[sys.argv.index("--fonts") + 1].split(",") if f.strip()]
+    out = Path(args[0])
+    count = int(args[1])
+    seed = int(args[2]) if len(args) > 2 else 1
     out.mkdir(parents=True, exist_ok=True)
     rng = random.Random(seed)
     for style, body in STYLES.items():
@@ -218,9 +309,25 @@ def main():
         dpi = rng.choice([150, 200, 300])
         meta["dpi"] = dpi
         style = ["-S", str(out / f"{meta['style']}.mss")] if STYLES[meta["style"]] else []
+        if variety:
+            body, look = variety_style(rng)
+            (out / f"{name}.mss").write_text('<?xml version="1.0" encoding="UTF-8"?>\n<museScore version="4.70"><Style>'
+                                             + body + "</Style></museScore>\n")
+            style = ["-S", str(out / f"{name}.mss")]
+            meta["style"], meta["look"] = "variety", look
+            dpi = meta["dpi"] = rng.choice([120, 150, 150, 200, 300])
         for src, dst in ((f"{name}.musicxml", f"{name}.png"), (f"{name}-key.musicxml", f"{name}-key.png")):
             subprocess.run([MSCORE, *style, "-r", str(dpi), "-o", str(out / dst), str(out / src)],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        # What MuseScore actually prints for each chord, read back from its own file of the sheet.
+        subprocess.run([MSCORE, "-o", str(out / f"{name}.mscx"), str(out / f"{name}.musicxml")],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        try:
+            printed = printed_chords(out / f"{name}.mscx")
+            meta["printed"] = printed if len(printed) == len(meta["chords"]) else None
+            (out / f"{name}.mscx").unlink()
+        except FileNotFoundError:
+            meta["printed"] = None
         (out / f"{name}.json").write_text(json.dumps(meta, indent=1))
         print(name, meta["style"], meta["bars"], "bars", len(meta["chords"]), "chords", flush=True)
 

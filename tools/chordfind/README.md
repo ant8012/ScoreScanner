@@ -14,6 +14,7 @@ erase the music first. Python prototype; nothing here runs in the app yet.
 | `score_reads.py` | Scores chord readings (a `--crop-bench` route, or a scan's MusicXML) against hand-made answer keys; `--grammar` keeps only readings that parse as chords. |
 | `pdf_truth.py` | Exact chord boxes from PDFs whose chord symbols are real text (Sibelius writes one text object per chord, in a chord font), and scores the finder against them. Used with The Public Domain Song Anthology (CC0, two chord rows per staff). |
 | `read_text.py CROPS [--truth T]` | Turns a `pcc-cat` reading into chords and staff text: joins the pieces of one direction (D.S. + al Coda), keeps a rehearsal mark only with a box around it, adds segno and coda signs from copisteria. |
+| `ocr_bench.py MODEL CROPS ROUTE` | Reads crops with a PaddleOCR text recogniser (PP-OCRv6 tiny/small/medium), no language model; a reading is a chord when it parses as one. |
 | `vlm_bench.py` | Reads exported crops with a local vision-language model through MLX-VLM (tested: LiquidAI LFM3-VL-2B). |
 
 Copisteria's inputs come from `ScannerCheck --copista PAGE MODELS OUT` (`layout.json`, `tok.json`, `dets.json`).
@@ -157,3 +158,39 @@ Junk words rise by about 13 per set: bar numbers at line starts now pass the mus
 (exact / root / false chords): three real charts 116/127/23 (was 116/127/21); Real Book set 1 302/375/88 (was
 302/375/75); set 2 183/215/176 (was 179/210/174). LFM names many of the new line-start numbers as chords ("A"),
 the cloud reader rejects them.
+
+### PP-OCRv6 on the finder's crops (no training)
+
+PaddleOCR 3.7's PP-OCRv6 recognisers, out of the box, on the same crops LFM3 read (3 real charts + both Real Book
+sets, 768 chords, 1,221 crops); a reading counts as a chord when it parses as one. Mac CPU times.
+
+| Reader | Exact | Root | False chords | ms/crop | Size |
+| --- | --- | --- | --- | --- | --- |
+| LFM3-VL-2B (MLX 8-bit) | 601 (78%) | 717 | 287 | ~250 | ~2 GB |
+| PP-OCRv6 small | 519 (68%) | 595 | 50 | 58 | ~20 MB |
+| PP-OCRv6 medium | 495 (64%) | 626 | 78 | 140 | ~73 MB |
+| PP-OCRv6 tiny | 451 (59%) | 589 | 66 | 17 | ~4 MB |
+
+On the three real charts PP-OCRv6 small reads 112/130 exact with 2 false chords (LFM3 116 with 23, Private Cloud
+Compute 125 with 4): junk comes back as words that fail the grammar, so it rejects junk like the cloud does. Its
+losses are raised extensions and handwriting: 7 read as ? or 1 (AbMA?, D1), b9 as 69, 9sus as isus, dim7 as 07,
+extensions dropped (Bm7b5 -> Bm). That is what fine-tuning on chord crops addresses. The grammar now accepts MA/MI
+spellings and a parenthesised chord.
+
+### Fine-tuned PP-OCRv6 small (November 2026)
+
+Training set (`build_train.py --literal --cap 150`): 539 generated sheets (27 chord fonts incl. LilyJAZZ and other
+handwriting-style fonts, labels read back from MuseScore) + the full anthology, 32,712 crops, junk 11%. Fine-tuned
+on one rented RTX 4090 (RunPod, ~$0.50): 8 passes, lr 1e-4 cosine, ~14 min; best held-out 99.7% (pass 5). Paddle
+trains on one CPU core on the Mac (~0.9 crops/s), so training needs a GPU.
+
+| Reader on the finder's crops (768 chords) | Exact | Root | False chords |
+| --- | --- | --- | --- |
+| PP-OCRv6 small, untrained | 519 (68%) | 595 | 50 |
+| PP-OCRv6 small, fine-tuned (full1) | 628 (82%) | 685 (89%) | 52 |
+| LFM3-VL-2B (earlier) | 601 (78%) | 717 | 287 |
+
+On the three real charts: fine-tuned 118/130, Private Cloud Compute 125. Lessons from the quick checks: canonical
+labels on one font made the model forget spellings (worse); labels must be literal and capped per chord. Left to fix:
+the junk label "~" leaks into minus signs (D-7 -> D~7), small-caps "MI"/"MA" (New Real Book) read as mj/m1, and
+false chords rose on Real Book set 2 (26 -> 39).

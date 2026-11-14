@@ -9,3 +9,6 @@ reports/
 App/SampleAssets/Player/
 # Local sample page, not redistributed
 App/SampleAssets/sample.jpg
+
+# Chord reader training data (generated sheets, anthology renders, crops); rebuilt by tools/chordfind scripts
+tools/chordfind/data/

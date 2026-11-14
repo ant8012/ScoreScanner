@@ -72,8 +72,8 @@ def score(truth, predicted):
     return out
 
 
-QUALITY = ["maj", "MAJ", "Maj", "ma", "min", "mi", "dim", "aug", "alt", "sus", "add", "m", "M", "-", "+", "o", "ø",
-           "Δ", "°"]
+QUALITY = ["maj", "MAJ", "Maj", "MA", "Ma", "ma", "min", "MIN", "MI", "Mi", "mi", "dim", "aug", "alt", "sus", "SUS",
+           "add", "m", "M", "-", "+", "o", "ø", "Δ", "°"]
 
 
 def is_chord(text):
@@ -83,6 +83,11 @@ def is_chord(text):
     s = s.translate(str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉⁺⁻", "01234567890123456789+-"))
     if re.fullmatch(r"N\.?C\.?", s, re.I):
         return True
+    # an alternate chord printed in parentheses, "(D7" or "Gb13)" when the finder splits the pair
+    if s.startswith("("):
+        s = s[1:]
+    if s.endswith(")") and s.count(")") > s.count("("):
+        s = s[:-1]
     m = re.match(r"^[A-G][b#]?", s)
     if not m:
         return False
