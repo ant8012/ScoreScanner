@@ -41,7 +41,7 @@ from find import find, load  # noqa: E402
 from key import chord_boxes  # noqa: E402
 from score_reads import is_chord, norm  # noqa: E402
 
-NONE = "~"
+NONE = "■"   # "not a chord". "~" looked like a minus sign and leaked into chords (D-7 read as D~7)
 OPUS = [("Œ„Š", "maj"), ("¨", "b"), ("©", "#"), ("‹", "m"), ("º", "o"), ("€", "b"), ("&", "#"), ("“", "sus"),
         ("Ø", "ø")]
 # What each Opus Chords symbol looks like on the page, for literal labels (the maj sign is left out: its glyph is
@@ -71,8 +71,42 @@ def page_sp(layout):
     return float(np.median(sps))
 
 
+def nudge(im, rng):
+    """Move, tilt and resize each character (connected piece of ink) a little on its own, so a font's identical
+    glyphs vary the way a copyist's hand does. The pieces are the rendered ink, only moved."""
+    from scipy import ndimage
+    a = np.asarray(im)
+    lab, n = ndimage.label(a < 160)
+    if n < 2 or n > 40:
+        return im
+    out = np.full(a.shape, 255, dtype=np.uint8)
+    h = a.shape[0]
+    for k, sl in enumerate(ndimage.find_objects(lab), 1):
+        if sl is None:
+            continue
+        piece = np.where(lab[sl] == k, a[sl], 255).astype(np.uint8)
+        p = Image.fromarray(piece)
+        f = rng.uniform(0.9, 1.12)
+        p = p.resize((max(1, round(p.width * f)), max(1, round(p.height * f))), Image.BILINEAR)
+        p = p.rotate(rng.uniform(-7, 7), resample=Image.BILINEAR, expand=True, fillcolor=255)
+        cy, cx = (sl[0].start + sl[0].stop) / 2, (sl[1].start + sl[1].stop) / 2
+        cy += rng.uniform(-0.05, 0.05) * h
+        cx += rng.uniform(-0.04, 0.04) * h
+        y0, x0 = int(round(cy - p.height / 2)), int(round(cx - p.width / 2))
+        q = np.asarray(p)
+        ys, xs = max(0, -y0), max(0, -x0)
+        y1, x1 = min(a.shape[0], y0 + q.shape[0]), min(a.shape[1], x0 + q.shape[1])
+        if y1 <= max(0, y0) or x1 <= max(0, x0):
+            continue
+        region = out[max(0, y0):y1, max(0, x0):x1]
+        np.minimum(region, q[ys:ys + region.shape[0], xs:xs + region.shape[1]], out=region)
+    return Image.fromarray(out)
+
+
 def augment(im, rng):
     """Random changes that make a clean render look like a scan or a phone photo."""
+    if rng.random() < 0.35:
+        im = nudge(im, rng)
     if rng.random() < 0.5:                                   # lower resolution, then back up
         f = rng.uniform(0.45, 0.9)
         w, h = im.size

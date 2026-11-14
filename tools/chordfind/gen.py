@@ -39,7 +39,11 @@ KINDS = [
     ("m11", "minor-11th"), ("-9", "minor-ninth"), ("maj9(#11)", "major-ninth"), ("7b5", "dominant"), ("sus", "suspended-fourth"),
     ("Δ", "major-seventh"), ("ø", "half-diminished"), ("6/9", "major-sixth"), ("m6/9", "minor-sixth"), ("7(#11)", "dominant"),
 ]
-COMMON = ["", "m", "7", "maj7", "m7", "m7b5", "6", "9", "-7", "Δ7", "7(b9)", "sus4", "13"]
+COMMON = ["", "m", "7", "maj7", "m7", "m7b5", "6", "9", "-7", "Δ7", "7(b9)", "sus4", "13", "mi7", "MI7", "MA7", "mi",
+          "7(#9#5)", "7(b9#5)", "6/9"]
+ARTICULATIONS = ['<accent placement="above"/>', '<strong-accent placement="above" type="up"/>',
+                 '<staccato placement="above"/>', '<tenuto placement="above"/>', '<staccatissimo placement="above"/>',
+                 '<strong-accent placement="above" type="up"/>']
 
 STAFF_TEXT = ["Swing", "Fine", "D.C. al Fine", "To Coda", "rit.", "Bossa", "Solo", "a tempo", "Ballad", "Latin",
               "Gtr. fill", "Tacet 1st x", "Straight 8ths", "Vamp"]
@@ -60,7 +64,10 @@ STYLES = {
 CHORD_FONTS = ["Edwin", "FreeSerif", "FreeSans", "MuseJazz Text", "Petaluma Text", "Petaluma Script", "Campania",
                "Finale Broadway Text", "Finale Maestro Text", "Gootville Text", "MScore Text", "Leland Text",
                "Arial", "Arial Narrow", "Helvetica", "Times New Roman", "Georgia", "Futura", "Avenir Next", "Gill Sans",
-               "Courier New", "Didot", "Noteworthy", "Marker Felt", "Bradley Hand", "Chalkboard SE", "Comic Sans MS"]
+               "Courier New", "Didot", "Noteworthy", "Marker Felt", "Bradley Hand", "Chalkboard SE", "Comic Sans MS",
+               # LilyJAZZ (OpenLilyPondFonts, OFL), Real Book style; install it in ~/Library/Fonts, or MuseScore
+               # silently falls back to a default font
+               "lilyjazz-chord", "lilyjazz-text"]
 MUSIC_FONTS = [("Leland", "Leland Text"), ("Bravura", "Bravura Text"), ("Petaluma", "Petaluma Text"),
                ("Finale Maestro", "Finale Maestro Text"), ("Gootville", "Gootville Text"),
                ("Finale Broadway", "Finale Broadway Text")]
@@ -73,9 +80,9 @@ def variety_style(rng):
     jazz = rng.random() < 0.4
     look = dict(font=font, music=music, jazz=jazz, size=rng.choice([9, 10, 10, 11, 12, 13, 14]),
                 style=rng.choice([0, 0, 0, 1, 2]),              # normal, bold, italic
-                ext_mag=round(rng.uniform(0.7, 1.0), 2), ext_adj=round(rng.uniform(-2.5, 0.0), 1),
-                mod_mag=round(rng.uniform(0.7, 1.0), 2), mod_adj=round(rng.uniform(-2.0, 0.0), 1),
-                stack=rng.random() < 0.25, stagger=rng.random() < 0.2, left=rng.random() < 0.35,
+                ext_mag=round(rng.uniform(0.7, 1.0), 2), ext_adj=round(rng.uniform(-0.8, 0.0), 1),
+                mod_mag=round(rng.uniform(0.7, 1.0), 2), mod_adj=round(rng.uniform(-0.6, 0.0), 1),
+                stack=rng.random() < 0.4, stagger=rng.random() < 0.35, left=rng.random() < 0.35,
                 spatium=round(rng.uniform(1.5, 2.0), 3))
     body = (f"<musicalSymbolFont>{music}</musicalSymbolFont><musicalTextFont>{music_text}</musicalTextFont>"
             + ("<chordStyle>jazz</chordStyle><chordsXmlFile>chords_jazz.xml</chordsXmlFile>" if jazz else "")
@@ -103,7 +110,7 @@ def chord(rng):
     text = rng.choice(COMMON if rng.random() < 0.7 else [k for k, _ in KINDS])
     kind = dict(KINDS)[text] if text in dict(KINDS) else "major"
     bass = None
-    if rng.random() < 0.15:
+    if rng.random() < 0.25:
         bass = (rng.choice(STEPS), rng.choice([0, 0, -1, 1]))
     name = step + {0: "", -1: "b", 1: "#"}[alter] + text
     if bass:
@@ -157,6 +164,7 @@ def sheet(rng, index):
     with_text = rng.random() < 0.6
     with_slurs = rng.random() < 0.4
     with_dynamics = rng.random() < 0.3
+    with_artic = rng.random() < 0.5
     with_volta = rng.random() < 0.3 and bars >= 8
     per_system = rng.choice([None, None, 4, 4, 3, 5])
     title = rng.choice(["Blue Harbour", "Night Song", "Test Tune", "Evening Lights", "Practice Chart", "Lead Sheet"])
@@ -217,11 +225,15 @@ def sheet(rng, index):
             lo, hi = (2, 13) if high else (2, 9)
             pos = min(hi, max(lo, pos + rng.choice([-2, -1, -1, 0, 1, 1, 2, 3 if high else 1])))
             step, octave = pitch(pos)
-            notations = ""
+            inner = ""
             if slur_open and j == 0:
-                notations = '<notations><slur type="start" placement="above" number="1"/></notations>'
+                inner += '<slur type="start" placement="above" number="1"/>'
             elif slur_open and j == len(pattern) - 1:
-                notations = '<notations><slur type="stop" number="1"/></notations>'
+                inner += '<slur type="stop" number="1"/>'
+            # accents and other articulations: above the staff they look like letters (a row of ^ was read as "A")
+            if with_artic and rng.random() < 0.3:
+                inner += "<articulations>" + rng.choice(ARTICULATIONS) + "</articulations>"
+            notations = f"<notations>{inner}</notations>" if inner else ""
             lyric = ""
             if with_lyrics:
                 lyric = f'<lyric number="1"><syllabic>single</syllabic><text>{LYRICS[lyric_i % len(LYRICS)]}</text></lyric>'

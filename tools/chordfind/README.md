@@ -194,3 +194,20 @@ On the three real charts: fine-tuned 118/130, Private Cloud Compute 125. Lessons
 labels on one font made the model forget spellings (worse); labels must be literal and capped per chord. Left to fix:
 the junk label "~" leaks into minus signs (D-7 -> D~7), small-caps "MI"/"MA" (New Real Book) read as mj/m1, and
 false chords rose on Real Book set 2 (26 -> 39).
+
+Round 2 (full2): junk label changed to "■" (the old "~" looked like a minus and leaked into chords); generated
+sheets gained accents/marcato/tenuto/staccato above notes (a row of ^ had been read as "A"), more stacked
+alterations, fraction-style bass notes, slash chords and mi7/MI7/MA7 spellings, LilyJAZZ in the regular font mix,
+extension raise limited to a realistic 0.8 sp; crops get per-character nudging (each glyph moved and tilted a
+little). 740 sheets + anthology, 44,397 crops, cap 200 per chord. ~20 min on an RTX 4090.
+
+| 768 test chords | Exact | Root | False chords |
+| --- | --- | --- | --- |
+| Untrained | 519 (68%) | 595 | 50 |
+| Round 1 (full1) | 628 (82%) | 685 | 52 |
+| Round 2 (full2) | 652 (85%) | 686 | 25 |
+
+Private Cloud Compute on the same crops (two New Real Book pages it finished before its daily quota, 127 chords):
+cloud 114, round 2 105, round 1 102, untrained 81. On the three real charts round 2 reads 118/130 with no false
+chords (cloud 125, 4 false). The gap left is mostly the New Real Book's small-capital MI/MA, which MuseScore
+cannot render.
