@@ -61,3 +61,17 @@ fixing, so they are development data.
 
 LFM3-VL-2B (MLX 8-bit, Mac) on the first crops: 110 exact / 127 root of 130, close to PCC on reading, but it
 names chords on junk crops (often the prompt's own examples), so it needs few junk crops and a grammar.
+
+### Naming every crop (`--crop-bench ... --routes pcc-cat`)
+
+`export_crops.py --all` also cuts the words the finder sets aside (text before the music, stacked words, boxed
+rehearsal marks), and the `pcc-cat` route asks Private Cloud Compute what each crop is: chord, rehearsal, section,
+navigation, tempo, instruction, lyric, title, number, notation or other. First run, on the three real charts and one
+generated sheet (the phone reached its daily Private Cloud Compute quota before the other four sheets):
+
+- Staff text: 13 of 14 marks found and named correctly (boxed rehearsal letters, Bridge, Verse, Intro, D.S., al
+  Coda, To Coda, Fine, Slowly, Up Tempo, a tempo, Tacet 1st x, Gtr. fill). No chord was named a rehearsal mark; the
+  chord-or-not prompt read the boxed A as an A chord and the page number 76 as F6. Missed: (Guitar), under the staff.
+- Chords about the same as the chord-or-not prompt (163 vs 168 exact of 178, 6 vs 4 false), within run-to-run noise.
+- Before it could replace the staff text pass: words of one direction arrive as separate crops (D.S. / al Coda), a
+  segno or volta number glued to a chord loses or spoils the chord, and the "a" of "a tempo" was named rehearsal A.
