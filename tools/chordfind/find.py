@@ -14,6 +14,13 @@ ERASE = ("note", "rest", "accid", "dots", "artic", "flag", "fermata", "clef", "k
          "repeatMark", "breath", "caesura", "mordent", "trill", "tupletNum", "tuplet_", "arpeg", "grpSym",
          "mRest", "barLine")
 
+# Volta numbers glue onto the chord beside them, so above the staff they are erased with the hook of their bracket
+# (the hook that touches the number); copisteria reads them even on handwritten charts. Its other hooks there are
+# mostly the raised 6s and 7s of handwritten chords. Segno and coda signs are kept as "sign" proposals, for joining
+# with the words around them, but not erased: copisteria rates real ones barely above a handwritten chord it calls a
+# segno (0.22 vs 0.13).
+VOLTA_P, SIGN_P = 0.25, 0.2
+
 P = dict(
     reach=11.0,        # how far above the staff to look, in staff spaces
     clear=0.25,        # gap kept above the top staff line
@@ -209,10 +216,26 @@ def find(gray, layout, tok, p=P):
         return False
 
     timed_ids = {id(s) for s in timed}
+    signs = []
+    use_signs = p.get("signs", True)
+    voltas = [s for s in layout["syms"] if use_signs and s["cls"].startswith("ending_") and s.get("p", 1) >= VOLTA_P
+              and above(s)]
+
+    def touches(a, b, sp):
+        return a[0] - 0.5 * sp <= b[2] and b[0] <= a[2] + 0.5 * sp and a[1] - 0.5 * sp <= b[3] and b[1] <= a[3] + 0.5 * sp
+
+    hooks = [s for s in layout["syms"] if s["cls"] == "spanEnd_tl" and above(s)
+             and any(touches(v["box"], s["box"], layout["staves"][v["staff"]]["sp"]) for v in voltas)]
+    trusted = {id(s) for s in voltas + hooks}
+    signs = voltas + [s for s in layout["syms"] if use_signs and s["cls"] in ("repeatMark_segno", "repeatMark_coda")
+                      and s.get("p", 1) >= SIGN_P and above(s)]
     for s in layout["syms"]:
-        if not s["cls"].startswith(ERASE):
+        sign = id(s) in trusted
+        if s["cls"].startswith("repeatMark") and above(s):
             continue
-        if p.get("trust_above", False) is False and above(s):
+        if not sign and not s["cls"].startswith(ERASE):
+            continue
+        if not sign and p.get("trust_above", False) is False and above(s):
             if s["cls"].startswith(("note", "rest")):
                 if id(s) not in timed_ids:
                     continue
@@ -326,6 +349,11 @@ def find(gray, layout, tok, p=P):
         for f in frames:
             proposals.append(dict(x0=f["x0"] + left, x1=f["x1"] + left, y0=f["y0"] + top, y1=f["y1"] + top,
                                   staff=k, order=order, kind="rehearsal"))
+    order_of = {k: i for i, k in enumerate(staves)}
+    for s in signs:
+        x0, y0, x1, y1 = (int(v) for v in s["box"])
+        proposals.append(dict(x0=x0, x1=x1, y0=y0, y1=y1, staff=s["staff"], order=order_of.get(s["staff"], 0),
+                              kind="sign", sign=s["cls"]))
     # A page that prints a second chord row on one line prints it wherever it has alternate changes, even a single
     # chord, so its stacked words are kept everywhere.
     if two_rows:

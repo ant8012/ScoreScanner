@@ -13,6 +13,7 @@ erase the music first. Python prototype; nothing here runs in the app yet.
 | `export_crops.py OUT NAME=IMAGE:COPISTA ...` | Cuts the finder's word boxes from real pages for `--crop-bench`. |
 | `score_reads.py` | Scores chord readings (a `--crop-bench` route, or a scan's MusicXML) against hand-made answer keys; `--grammar` keeps only readings that parse as chords. |
 | `pdf_truth.py` | Exact chord boxes from PDFs whose chord symbols are real text (Sibelius writes one text object per chord, in a chord font), and scores the finder against them. Used with The Public Domain Song Anthology (CC0, two chord rows per staff). |
+| `read_text.py CROPS [--truth T]` | Turns a `pcc-cat` reading into chords and staff text: joins the pieces of one direction (D.S. + al Coda), keeps a rehearsal mark only with a box around it, adds segno and coda signs from copisteria. |
 | `vlm_bench.py` | Reads exported crops with a local vision-language model through MLX-VLM (tested: LiquidAI LFM3-VL-2B). |
 
 Copisteria's inputs come from `ScannerCheck --copista PAGE MODELS OUT` (`layout.json`, `tok.json`, `dets.json`).
@@ -75,3 +76,18 @@ generated sheet (the phone reached its daily Private Cloud Compute quota before 
 - Chords about the same as the chord-or-not prompt (163 vs 168 exact of 178, 6 vs 4 false), within run-to-run noise.
 - Before it could replace the staff text pass: words of one direction arrive as separate crops (D.S. / al Coda), a
   segno or volta number glued to a chord loses or spoils the chord, and the "a" of "a tempo" was named rehearsal A.
+
+Second round (fixes scored on the first run's saved answers; the phone run of all eight pages is still to do, the
+phone was at its Private Cloud Compute quota):
+
+- `read_text.py` joins neighbouring pieces of the same kind into one direction; rehearsal marks and section names
+  stand alone, chords never join. A crop named rehearsal without a box joins the word beside it or becomes the chord
+  it looks like; a one- or two-letter "lyric" above the staff joins a tempo or instruction beside it (the "a" of
+  "a tempo" came back as a lyric, not a rehearsal mark).
+- The finder erases copisteria's volta numbers above the staff, with the bracket hook touching them, so "1." no longer
+  glues onto a chord. Its other hooks and its segno/coda above the staff are not trusted for erasing: on a
+  handwritten chart they were raised 6s and 7s (segno 0.13 against 0.22 to 0.37 for real ones). Generated and
+  anthology scores unchanged.
+- `pcc-cat` labels boxed crops "boxed" and has an alsoPrinted field, so a chord with a sign beside it keeps both.
+- Staff text on the four pages read: 10 -> 13 of 15 directions found whole, all named right. Missed: the "1" of
+  "D.S. al Coda 1" (not transcribed) and (Guitar), under the staff.
