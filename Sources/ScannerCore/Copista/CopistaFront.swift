@@ -566,11 +566,69 @@ extension Copista {
       }
     }
 
+    // MARK: a page edge in the left margin
+    static let edgeRuleReachSp = 4.0, edgeRuleAspect = 6.0
+
+    /// A dark stroke in the margin left of every staff: its rows (y -> leftmost and rightmost x).
+    struct EdgeRule {
+      var rows: [Int: (Int, Int)]
+      /// Whether a detection box lies on the stroke for at least half its height.
+      func covers(_ b: [Double]) -> Bool {
+        let y0 = Int(b[1]), y1 = Int(b[3])
+        guard y1 > y0 else { return false }
+        let on = (y0...y1).filter { y in rows[y].map { Double($0.0 - 2) <= b[2] && b[0] <= Double($0.1 + 2) } ?? false }.count
+        return Double(on) >= 0.5 * Double(y1 - y0 + 1)
+      }
+    }
+
+    /// Long strokes left of every staff that run on well above the first staff or below the last: the edge
+    /// of a book page or a binding shadow on a photocopy, often slanted. A bracket or a system's opening line
+    /// stays with the staves it joins, so a stroke that reaches into the empty margin is neither. Left in,
+    /// one of these reads as a bracket and as an opening line, and joins every system it passes into one.
+    static func edgeRules(_ mask: Mask, _ staves: [Staff]) -> [EdgeRule] {
+      guard staves.count >= 2 else { return [] }
+      let sp = median(index: staves.map(\.sp))
+      let left = min(mask.width, Int(staves.map(\.x0).min()!))
+      let top = staves.map(\.y0).min()!, bottom = staves.map(\.y1).max()!
+      guard left > 0 else { return [] }
+      let H = mask.height
+      var seen = [Bool](repeating: false, count: H * left)
+      var rules: [EdgeRule] = []
+      for y in 0..<H {
+        for x in 0..<left where mask[y, x] && !seen[y * left + x] {
+          // one 8-connected stroke inside the margin
+          var stack = [(y, x)], rows: [Int: (Int, Int)] = [:]
+          seen[y * left + x] = true
+          while let (cy, cx) = stack.popLast() {
+            let r = rows[cy] ?? (cx, cx)
+            rows[cy] = (min(r.0, cx), max(r.1, cx))
+            for dy in -1...1 {
+              for dx in -1...1 {
+                let ny = cy + dy, nx = cx + dx
+                if ny < 0 || ny >= H || nx < 0 || nx >= left || seen[ny * left + nx] || !mask[ny, nx] { continue }
+                seen[ny * left + nx] = true
+                stack.append((ny, nx))
+              }
+            }
+          }
+          let ys = rows.keys, a = Double(ys.min()!), b = Double(ys.max()!)
+          let wide = Double(rows.values.map { $0.1 }.max()! - rows.values.map { $0.0 }.min()! + 1)
+          let spans = staves.filter { a <= $0.y0 && $0.y1 <= b }.count
+          if spans >= 2 && (b - a) >= edgeRuleAspect * min(wide, Double(left)) / 2 &&
+            (a < top - edgeRuleReachSp * sp || b > bottom + edgeRuleReachSp * sp) {
+            rules.append(EdgeRule(rows: rows))
+          }
+        }
+      }
+      return rules
+    }
+
     // MARK: the ink path
     static func inkStaves(_ gray: Gray, _ syms: [Sym]) -> [Staff]? {
       var staves = inkStavesFrom(gray, syms)
       let other = inkStavesFrom(cleanPage(gray), syms)
       if let other, staves == nil || stavesScore(other, syms) > 1.02 * stavesScore(staves!, syms) { staves = other }
+      staves = staves.map { joinSplit($0, syms) }
       if let staves {
         let found = findStaves(gray, paperTol: staffPaperTol).staves
         for st in staves {
@@ -578,6 +636,26 @@ extension Copista {
         }
       }
       return staves
+    }
+
+    static let splitGapSp = 1.0
+
+    /// One staff traced as two: on a curled page a staff bends away from its straight start, and the bent
+    /// part is found as a staff of its own just below (or above) it, closer than any two real staves sit.
+    /// Left apart, that system has a staff too many and the whole page gets an extra part.
+    static func joinSplit(_ staves: [Staff], _ syms: [Sym]) -> [Staff] {
+      var out: [Staff] = []
+      for st in staves {          // in page order
+        if let a = out.last, st.y0 - a.y1 < splitGapSp * min(a.sp, st.sp) {
+          a.bars = stableSorted(a.bars + st.bars) { syms[$0].cx < syms[$1].cx }
+          a.sp = (a.sp + st.sp) / 2
+          a.y0 = min(a.y0, st.y0); a.y1 = max(a.y1, st.y1)
+          a.x0 = min(a.x0, st.x0); a.x1 = max(a.x1, st.x1)
+        } else {
+          out.append(st)
+        }
+      }
+      return out
     }
 
     static func stavesScore(_ staves: [Staff], _ syms: [Sym]) -> Double {
@@ -779,15 +857,32 @@ extension Copista {
       }
       var syms = merge(dets, classId: classId, classes: meta.classes)
       var staves = gray.map { inkStaves($0, syms) } ?? nil
-      let pageInk = gray.map { g in
-        PageInk(gray: g, mask: inkMask(g.pixels.map(Float.init), width: g.width, height: g.height, integral: true))
+      var mask = gray.map { g in inkMask(g.pixels.map(Float.init), width: g.width, height: g.height, integral: true) }
+      if var g = gray, var m = mask, let st = staves {
+        let rules = edgeRules(m, st)
+        if !rules.isEmpty {
+          // Painted out and not taken as brackets, then the staves are found again on the cleaned page.
+          for r in rules {
+            for (y, (x0, x1)) in r.rows {
+              for x in max(0, x0 - 2)...min(g.width - 1, x1 + 2) { g.pixels[y * g.width + x] = 255; m.bits[y * g.width + x] = false }
+            }
+          }
+          gray = g
+          mask = m
+          let kept = dets.filter { d in
+            family(d.cls) != "grpSym" || !rules.contains { $0.covers(d.xyxy) }
+          }
+          syms = merge(kept, classId: classId, classes: meta.classes)
+          staves = inkStaves(g, syms)
+        }
       }
+      let pageInk = gray.map { g in PageInk(gray: g, mask: mask!) }
       let inkPath = !(staves ?? []).isEmpty
       let systems: [System]
       if let st = staves, !st.isEmpty {
         systems = Front.systems(&syms, st, page: pageInk, ink: true, links: meta.links, forced: cuts, classId: classId)
       } else {
-        let st = boxStaves(syms)
+        let st = joinSplit(boxStaves(syms), syms)
         staves = st
         fillGaps(&syms, st, classId: classId)
         snapBars(syms, st)

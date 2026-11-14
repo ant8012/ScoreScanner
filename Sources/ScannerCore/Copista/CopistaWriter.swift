@@ -149,7 +149,7 @@ extension Copista {
     static let shortRight: Set<String> = ["barLine_final", "barLine_repeat_end"]
     static let accAnchor: [String: Double] = ["flat": 0.46, "dflat": 0.46, "natflat": 0.46]
     static let alterKeepP = 0.97
-    static let alignBrace = 2.0, alignClef = 1.0, alignShift = 0.01
+    static let alignBrace = 2.0, alignClef = 1.0, alignShift = 0.01, alignSize = 1.2
     static let tieRise = 2.0, tieFar = 6.0, beamReach = 0.7
     static let gapLogp = log(0.02), overlapLogp = log(0.02), sameOnsetLogp = log(0.05), pastBarLogp = log(0.01)
     static let endGapLogp = log(0.02)
@@ -227,6 +227,22 @@ extension Copista {
       return r.clef
     }
 
+    /// Staves of a system that a brace marks as one half of a pair whose other staff was not found (an empty
+    /// piano staff is easy to miss): the brace runs on two staff heights past the one staff it covers.
+    /// Position in the system -> true for the upper half, false for the lower.
+    static func halfBraced(_ L: Layout, _ sy: System, _ braces: [Sym]) -> [Int: Bool] {
+      var out: [Int: Bool] = [:]
+      for s in braces {
+        let cov = covered(L, s.box, sy.staves)
+        guard cov.count == 1 else { continue }
+        let st = L.staves[sy.staves[cov[0]]]
+        let reach = 2 * (st.y1 - st.y0)
+        if s.box.3 > st.y1 + reach / 2 && s.box.1 >= st.y0 - st.sp * 2 { out[cov[0]] = true }
+        else if s.box.1 < st.y0 - reach / 2 && s.box.3 <= st.y1 + st.sp * 2 { out[cov[0]] = false }
+      }
+      return out
+    }
+
     /// Per system: place (in the fullest system) -> staff.
     static func alignSystems(_ rd: Reading, _ plans: [[Int]]) -> [[Int: Int]] {
       let L = rd.layout
@@ -236,6 +252,7 @@ extension Copista {
       let pair = Set(plans.filter { $0.count == 2 }.map { $0[0] })
       let braces = L.syms.filter { isReal(rd, $0.i) && cls(rd, $0.i) == "grpSym_brace" }
       let tClef = tmpl.staves.map { openingClef(rd, $0) }
+      let tSp = tmpl.staves.map { L.staves[$0].sp }
       var out: [[Int: Int]] = []
       for sy in L.systems {
         let n = sy.staves.count
@@ -243,10 +260,15 @@ extension Copista {
         if n == K { out.append(identity()); continue }
         let own = bracedPairs(L, sy, braces)
         if !own.isEmpty && pair.isEmpty { out.append(identity()); continue }
+        let half = pair.isEmpty ? [:] : halfBraced(L, sy, braces)
         let clefs = sy.staves.map { openingClef(rd, $0) }
         func unary(_ i: Int, _ p: Int) -> Double {
           var v = -alignShift * Double(abs(p - i))
           if let c = clefs[i], let t = tClef[p] { v += c == t ? alignClef : -alignClef }
+          // a small staff (an ossia or cue line) is not the full-size staff of the same clef beside it
+          let sp = L.staves[sy.staves[i]].sp
+          if max(sp, tSp[p]) > alignSize * min(sp, tSp[p]) { v -= alignClef }
+          if let upper = half[i] { v += pair.contains(upper ? p : p - 1) ? alignBrace : -alignBrace }
           return v
         }
         func link(_ i: Int, _ q: Int, _ p: Int) -> Double {

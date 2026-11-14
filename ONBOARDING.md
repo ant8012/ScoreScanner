@@ -59,7 +59,7 @@ sets memory and thread limits.
 
 ```sh
 swift build
-swift test                                  # ScannerCore tests (51)
+swift test                                  # ScannerCore tests (55)
 ```
 
 The app builds through the shell. Build **arm64 only**; a universal build fails to find ScannerCore for x86_64.
@@ -100,9 +100,11 @@ text, prefer Private Cloud Compute, allow on-device fallback (off), cloud reques
 ### Checking a change
 
 1. `swift test`.
-2. Scan both test scores on the phone and compare with the expected results above, or with a previous scan's
+2. For reading changes, run the OpenScore layout check (`tools/eval/README.md`) and compare it page by page
+   with a run from before the change.
+3. Scan both test scores on the phone and compare with the expected results above, or with a previous scan's
    folder: the same notes, rests and chords in order, and the same title, composer and part names.
-3. For notation changes, open the MusicXML in MuseScore 4 (`mscore -o out.mscz score.musicxml`, without `-f`).
+4. For notation changes, open the MusicXML in MuseScore 4 (`mscore -o out.mscz score.musicxml`, without `-f`).
    It should import with no "incomplete measure" errors.
 
 ## Releasing to Aria
@@ -126,8 +128,13 @@ evidence inputs must be int64. `Vendor/copisteria/` records what the port change
 
 - A chord line is dropped when the notes have fewer bars than the page prints (`ChordMusicXML` can't place it).
 - Parenthesised turnaround chords, e.g. `(Am7 … G7)`, are missed.
-- Piano right hand written in the bass clef can land on the wrong staff. Some pages read extra bars.
+- Some pages read extra bars (36 on the OpenScore check: Butterworth, Cowen *The Better Land*, Brahms
+  *Die Mainacht* p2).
+- An empty staff, or a small ossia staff, can be missed; the rest of that system then still lands in the right
+  parts in most cases, but the missed staff's notes are lost.
 - Two-page spreads read as fake multi-part systems; one page per photo is expected.
+- Photos and photocopies: a page edge in the margin and a curled staff are handled (`Front.edgeRules`,
+  `Front.joinSplit`), but the OpenScore check can't show these; check them on real photos.
 - Cloud chord reading sends crops for every bar even on pages with no chord symbols, which uses up the quota on
   long classical scores.
 

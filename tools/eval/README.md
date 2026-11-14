@@ -16,6 +16,8 @@ python3 tools/eval/overlay.py PAGE.png $W/base/<page> out.png   # staffs coloure
 `score.py` prints how many pages have the right staffs and systems, the mean note error over comparable
 pages, and how many bars are off, and writes `pages.json`. Compare two runs page by page before keeping a
 change. Baseline (Nov 13 2026, 0.1.0): 56 layout-ok, 23 missed-staffs; 75 comparable, NED 0.042, 36 bars off.
+After the grouping fixes (edge rules, split staves, system placement): NED 0.036, 36 bars off; only
+Faisst p3/p5 and Cowen *Past and Future* p4 change, all for the better.
 
 The corpus is downloaded, never committed. The rendered pages are clean: they don't show photo problems such
 as page curl or a binding shadow, so check those on real photos as well.
