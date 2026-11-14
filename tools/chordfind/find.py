@@ -34,6 +34,9 @@ P = dict(
     root_gap=0.8,      # a lone capital joins the next word within this many letter heights
     trail_gap=0.8,     # a small or accidental piece joins the word before it within this many letter heights
     overlap=0.25,      # same line: vertical overlap as a fraction of the smaller height
+    above_centre=True, # a symbol is above the staff by its middle (chord letters sitting on the top line)
+    page_width=True,   # search above a staff across the page's usual staff width (copisteria cuts some short)
+    adaptive_gap=True, # widen the word gap to a loosely set font's letter spacing (up to gap_cap)
 )
 
 
@@ -91,6 +94,17 @@ def words(comps, sp, p):
     tall = [h for h in heights if h > 0.6 * sp] or [1.5 * sp]
     letter = p.get("_letter") or float(np.percentile(tall, p.get("letter_pct", 50)))
     gap = p["gap"] * letter
+    if p.get("adaptive_gap", False):
+        # Some fonts are set loosely (Real Book 3: "B m7 b5", 4-5 px between letters where MuseScore leaves 1-3):
+        # widen the gap to the spacing this line actually uses between neighbouring letters, never past a cap.
+        level = []
+        for a, b in zip(comps, comps[1:]):
+            ov = min(a["y1"], b["y1"]) - max(a["y0"], b["y0"])
+            g = b["x0"] - a["x1"]
+            if 0 <= g <= 0.5 * letter and ov >= 0.5 * min(a["y1"] - a["y0"], b["y1"] - b["y0"]):
+                level.append(g)
+        if len(level) >= 8:
+            gap = min(max(gap, p.get("gap_scale", 1.5) * float(np.median(level))), p.get("gap_cap", 0.35) * letter)
     # Each piece joins the word it overlaps most, judged against the whole word so far (capital root included):
     # a raised "4" in sus4 barely overlaps the lowercase "s" beside it but sits inside the height of "Gsus".
     groups = []
@@ -190,6 +204,11 @@ def find(gray, layout, tok, p=P):
         st = layout["staves"][s["staff"]] if s.get("staff") is not None and s["staff"] >= 0 else None
         if st is None:
             return False
+        if p.get("above_centre", False):
+            # by its middle: a chord letter that sits on the top line is still above the staff (copisteria called a
+            # big C hugging the staff a fermata at 0.06, a B a natural at 0.07)
+            mid = (s["box"][1] + s["box"][3]) / 2
+            return mid < st["y0"] or (p.get("gap_below", True) and mid > st["y1"])
         return s["box"][3] < st["y0"] - 0.3 * st["sp"] or (p.get("gap_below", True) and s["box"][1] > st["y1"] + 0.3 * st["sp"])
 
     def real(i):
@@ -248,6 +267,8 @@ def find(gray, layout, tok, p=P):
         clean[max(0, int(y0 - q)):int(y1 + q) + 1, max(0, int(x0 - q)):int(x1 + q) + 1] = False
 
     staves = sorted(range(len(layout["staves"])), key=lambda k: layout["staves"][k]["y0"])
+    page_x0 = float(np.median([st["x0"] for st in layout["staves"]])) if layout["staves"] else 0
+    page_x1 = float(np.median([st["x1"] for st in layout["staves"]])) if layout["staves"] else W
     proposals = []
     two_rows = False
     prev_bottom = 0
@@ -256,7 +277,12 @@ def find(gray, layout, tok, p=P):
         sp = st["sp"]
         top = int(max(prev_bottom + 0.5 * sp, st["y0"] - p["reach"] * sp, 0))
         bottom = int(st["y0"] - p["clear"] * sp)
-        left, right = int(max(0, st["x0"] - sp)), int(min(W, st["x1"] + sp))
+        x0, x1 = st["x0"], st["x1"]
+        if p.get("page_width", False):
+            # copisteria sometimes reports a staff shorter than it is (a line cut off at 967 of 1115 px, another
+            # starting at 263 instead of 75); text above it is searched across the page's usual staff width
+            x0, x1 = min(x0, page_x0), max(x1, page_x1)
+        left, right = int(max(0, x0 - sp)), int(min(W, x1 + sp))
         prev_bottom = st["y1"]
         if bottom - top < 2 * sp:
             continue

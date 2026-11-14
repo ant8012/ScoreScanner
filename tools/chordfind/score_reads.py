@@ -32,9 +32,9 @@ def norm(s):
     rest = rest.replace("(", "").replace(")", "").replace(",", "")
     if rest == "M":
         rest = "m"                     # small-caps fonts print minor as a capital M (What a Wonderful World)
-    rest = re.sub(r"^(maj|MAJ|Maj|ma|M|Δ)(?=7|9|11|13|$)", "maj", rest)
+    rest = re.sub(r"^(maj|MAJ|Maj|MA|ma|M|Δ)(?=7|9|11|13|$)", "maj", rest)   # MA7: New Real Book major
     rest = rest.replace("Δ", "maj")
-    rest = re.sub(r"^(min|mi|-)", "m", rest)
+    rest = re.sub(r"^(min|MIN|mi|MI|Mi|-)", "m", rest)
     rest = re.sub(r"^ø7?", "m7b5", rest)
     rest = re.sub(r"^o7", "dim7", rest)
     rest = re.sub(r"^o$", "dim", rest)

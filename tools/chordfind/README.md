@@ -91,3 +91,25 @@ phone was at its Private Cloud Compute quota):
 - `pcc-cat` labels boxed crops "boxed" and has an alsoPrinted field, so a chord with a sign beside it keeps both.
 - Staff text on the four pages read: 10 -> 13 of 15 directions found whole, all named right. Missed: the "1" of
   "D.S. al Coda 1" (not transcribed) and (Guitar), under the staff.
+
+### Blind test on Real Book pages (November 2026)
+
+Eight pages sampled from four scanned fakebooks the owner supplied (New Real Book 1 and 2, Real Book 3, Real Book
+6th edition; engraved and handwritten), 396 chords keyed by hand. The books stay outside the repository.
+
+- Finder with rules frozen: 369/396 isolated (93.2%); 6 merged, 17 split, 4 missed. Causes: (1) chord letters
+  sitting on the top staff line were erased as copisteria symbols it barely believes in (a C as a fermata at 0.06, a
+  B as a natural at 0.07) because "above the staff" was judged by the symbol's bottom; (2) copisteria reported two
+  staves shorter than printed, hiding the chords past their ends; (3) Real Book 3 sets chords loosely (4-5 px
+  between letters, "B m7 b5"), wider than the 0.2-letter word gap.
+- Fixes, now default: judge "above the staff" by a symbol's middle; search above a staff across the page's usual
+  staff width; widen the word gap per line to the spacing it uses (median of letter gaps x1.5, at most 0.35 letter).
+  A fixed wider gap was rejected: it merged 28-75 generated chords. Anthology and generated scores unchanged.
+- After the fixes: 381/396 isolated (96.2%). Left: Real Book 3 lines whose spacing can't be measured (title text
+  sets it, or too few chords), two merges where the print touches (Dbma7Gb13sus), a coda sign between chords.
+- LFM3-VL-2B reading the crops (clear prompt): 293 -> 302 exact, 369 -> 375 root of 396, 71 -> 75 false chords.
+  Its errors: a handwritten 7 read as 1 (D1, Gm1), the 7 dropped in slash chords (G7/F -> G/F), endings lost to
+  splits.
+- LFM3 cannot name what a crop is: with the category list (pcc-cat's task) it copied the definitions ("lyric: words
+  of the sung text" for Am7) and fell from 279 to 151 exact of 335; a short two-line version fell to 140. Private
+  Cloud Compute does this well; a small model needs one question per call.
