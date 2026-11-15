@@ -219,8 +219,8 @@ cannot render.
 `ChordFinder.swift` is a rule-for-rule port of `find.py`, including Python's tie-breaking (stable sorts, first
 minimum/maximum), scipy's raster-order component labels, numpy's linear percentile and round-half-to-even.
 `Scanner.scan` runs it on copisteria's reading in memory and returns the words as `ScanResult.chordWords`
-(~10 ms a page on a Mac). Parity with `find.py` (`finder_parity.py`): 280 pages, 20,944 proposals, all identical
-(the 20 real test pages, 110 generated sheets in every style, 150 anthology pages); the in-scan run matches the
+(~10 ms a page on a Mac). Parity with `find.py` (`finder_parity.py`): 344 pages, 26,021 proposals, all identical
+(the 20 real test pages, 174 generated sheets in every style, 150 anthology pages); the in-scan run matches the
 run from dumped files.
 
 Round 3 (full3): small capitals without drawing (Copperplate and Bodoni 72 Smallcaps print lowercase quality letters
@@ -235,3 +235,45 @@ book spellings (ma7, mi9, mi(b5)), uneven-light augmentation; 941 sheets + antho
 On the two New Real Book pages Private Cloud Compute read (127 chords): cloud 114 exact / 120 root / 6 false;
 round 3 114 / 118 / 5 (round 2: 105 / 109 / 5). A Sleepin' Bee 61 -> 68 of 77, equal to the cloud. Overall exact is
 flat: Real Book set 2 dropped 190 -> 187 and its false chords rose 14 -> 18.
+
+### Finder: marks on notes and loosely set fonts (November 2026)
+
+Two finder changes, in `find.py` and `ChordFinder.swift` alike:
+
+- `attached_marks`: an accent, staccato, tenuto or fermata above the staff is erased when copisteria is confident
+  (p >= 0.6), it is sized like a mark (a fermata wider than tall) and it sits centred over a note copisteria timed.
+  Real ones measure p 0.9-0.99 centred over their note; chord letters copisteria misreads as marks are unsure and
+  taller than wide (a handwritten C as a fermata at 0.51) and stay for the reader.
+- `page_gap`: the letter spacing of a loosely set font (Real Book 3, "B m7 b5") is measured over every chord row on
+  the page, not one line (a line rarely has the 8 gaps needed). It widens the word gap for the pieces inside a chord
+  but not for a capital-height letter, because the next chord's root sits as close as the letters within one
+  ("F m7 F#o7": 5 px either way).
+- A lone capital also joins the word after it when that word's first glyph is level with it: a raised extension
+  ("C 9(#11)") is higher as a whole word than its first glyph, and with the wider gap it becomes one word.
+
+Round 3 reader (full3) on the finder's crops, the committed finder (47a7c79) -> now. Read one crop at a time (`ocr_bench.py --batch-size 1`):
+PaddleOCR pads each batch to its widest crop, so the same crop can read differently when the crops around it
+change. At the default batch of 16, removing junk crops changed 8 identical crops' readings and added 3 false chords
+that had nothing to do with the finder.
+
+| 768 test chords | Exact | Root | False chords | Crops |
+| --- | --- | --- | --- | --- |
+| 47a7c79 | 654 | 704 | 33 | 1,221 |
+| Marks only | 657 | 707 | 33 | |
+| Page spacing only | 658 | 704 | 33 | |
+| Both (with the root join) | 661 | 707 | 33 | 1,187 |
+
+At the default batch of 16: 651 / 704 / 29 -> 659 / 707 / 32.
+
+Gains: Cmi7 and C7(#9#5) no longer merged with accents (nrb2-p105), Cmaj9 no longer pushed up by a fermata
+(rb6-p370), B m7b5, Bb m7, A 7b9 and C# m7b5 whole (rb3-p42). No chord crop read worse. Eb 6/9 (stacked) is now
+one box but reads "Eb9#" (before "Eb6" + "9": wrong either way). Anthology box truth unchanged (18,302 of 18,344
+isolated; 2 fewer junk words). Generated sheets (16 batches, 24,152 chords): isolated 14,816 -> 14,856, beat right
+14,620 -> 14,657, junk words 7,137 -> 5,201. One batch (b13) loses 6: chords in a real second chord row that only
+counted as one before because junk accent words filled out the row (the second-row rule wants 3+ words across 2+
+bars), and a marcato copisteria rates 0.55, under the cutoff. Python-Swift parity: 344 pages, 26,021 proposals, all
+identical.
+
+17 unseen pages (5 per book, less two photos and a text page): 968 -> 948 crops, 501 chord readings either way.
+Every changed crop improved: F7#9 four times and GΔ7 on Real Book 3 pages are whole (were F7 + #9, G + Δ + 7), 12
+fermata and accent crops are gone. No chord lost, no new false chord.

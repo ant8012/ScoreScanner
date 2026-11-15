@@ -1,6 +1,6 @@
 """Read exported chord crops with a PaddleOCR text recogniser (PP-OCRv6 tiny / small / medium), no language model.
 
-usage: python ocr_bench.py MODEL_NAME CROPS_DIR ROUTE_NAME [--min-score S] [--model-dir DIR]
+usage: python ocr_bench.py MODEL_NAME CROPS_DIR ROUTE_NAME [--min-score S] [--model-dir DIR] [--batch-size N]
 
 --model-dir loads a fine-tuned model exported by train_chords.sh (MODEL_NAME then names its architecture). A
 reading of "~" is the fine-tuned model's "not a chord".
@@ -9,6 +9,9 @@ MODEL_NAME is a PaddleOCR recognition model such as PP-OCRv6_small_rec. Writes C
 the shape of the app's --crop-bench, so score_reads.py scores it the same way. A recogniser has no "not a chord"
 answer: a reading counts as a chord when it parses as one (score_reads.is_chord) and the model's confidence is at
 least --min-score (default 0). The raw text and confidence are kept for choosing a cutoff later.
+
+--batch-size (default 16) is how many crops are read together. A batch is padded to its widest crop, so the same crop
+can read differently when its neighbours change; compare two finders' crops with --batch-size 1.
 """
 
 import json
@@ -33,11 +36,12 @@ def main():
     from paddleocr import TextRecognition
 
     model_dir = sys.argv[sys.argv.index("--model-dir") + 1] if "--model-dir" in sys.argv else None
+    batch_size = int(sys.argv[sys.argv.index("--batch-size") + 1]) if "--batch-size" in sys.argv else 16
     model = TextRecognition(model_name=model_name, **({"model_dir": model_dir} if model_dir else {}))
     items = json.load(open(f"{crops}/manifest.json"))
     paths = [f"{crops}/{item['file']}" for item in items]
     start = time.time()
-    outputs = list(model.predict(input=paths, batch_size=16))
+    outputs = list(model.predict(input=paths, batch_size=batch_size))
     seconds = time.time() - start
     results = []
     for item, out in zip(items, outputs):

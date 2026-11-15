@@ -37,7 +37,14 @@ P = dict(
     above_centre=True, # a symbol is above the staff by its middle (chord letters sitting on the top line)
     page_width=True,   # search above a staff across the page's usual staff width (copisteria cuts some short)
     adaptive_gap=True, # widen the word gap to a loosely set font's letter spacing (up to gap_cap)
+    attached_marks=True,  # erase confident accents, staccatos and fermatas sitting on a timed note
+    page_gap=True,     # measure letter spacing over the whole page's chord rows, not line by line
 )
+
+# Articulations above a staff that belong to a note: copisteria is confident (0.9+) on real ones, sized like a
+# mark, and centred over the note they sit on. A handwritten chord letter it misreads as one is rarely confident and
+# is taller than wide (a big C read as a fermata at 0.51).
+MARK_P = 0.6
 
 
 def load(cop_dir):
@@ -105,13 +112,24 @@ def words(comps, sp, p):
                 level.append(g)
         if len(level) >= 8:
             gap = min(max(gap, p.get("gap_scale", 1.5) * float(np.median(level))), p.get("gap_cap", 0.35) * letter)
+    # The letter spacing this page's chord rows use (see find) widens the gap for the pieces inside a chord (quality,
+    # extension, accidental) but not for a capital-height letter: in a loosely set font the next chord's root sits as
+    # close as the letters within one ("F m7 F#o7": 5 px either way), and a root needs the line's own gap.
+    page_gap = gap
+    if p.get("_page_gap") is not None:
+        page_gap = max(gap, min(p.get("gap_scale", 1.5) * p["_page_gap"] * letter, p.get("gap_cap", 0.35) * letter))
+
+    def gap_for(c):
+        h = c["y1"] - c["y0"]
+        capital = 0.85 * letter <= h <= 1.25 * letter and c["x1"] - c["x0"] >= 0.5 * letter
+        return gap if capital else page_gap
     # Each piece joins the word it overlaps most, judged against the whole word so far (capital root included):
     # a raised "4" in sus4 barely overlaps the lowercase "s" beside it but sits inside the height of "Gsus".
     groups = []
     for c in comps:
         best, best_ov = None, 0.0
         for g in groups:
-            if c["x0"] - g["x1"] > gap or c["x1"] < g["x0"]:
+            if c["x0"] - g["x1"] > gap_for(c) or c["x1"] < g["x0"]:
                 continue
             ov = min(g["y1"], c["y1"]) - max(g["y0"], c["y0"])
             need = p["overlap"] * min(g["y1"] - g["y0"], c["y1"] - c["y0"])
@@ -135,8 +153,14 @@ def words(comps, sp, p):
                 h, w = g["y1"] - g["y0"], g["x1"] - g["x0"]
                 if len(g["parts"]) != 1 or h < 0.8 * letter or w > 1.3 * h:
                     continue
-                nxt = [o for o in groups if o is not g and 0 <= o["x0"] - g["x1"] <= root_gap
-                       and min(o["y1"], g["y1"]) - max(o["y0"], g["y0"]) >= 0.5 * min(h, o["y1"] - o["y0"])]
+                # level with the word after it, or with that word's first piece: an extension written raised
+                # ("C 9(#11)") sits higher as a whole word than its first glyph does
+                def level(o):
+                    if min(o["y1"], g["y1"]) - max(o["y0"], g["y0"]) >= 0.5 * min(h, o["y1"] - o["y0"]):
+                        return True
+                    f = min(o["parts"], key=lambda c: c["x0"])
+                    return min(f["y1"], g["y1"]) - max(f["y0"], g["y0"]) >= 0.5 * min(h, f["y1"] - f["y0"])
+                nxt = [o for o in groups if o is not g and 0 <= o["x0"] - g["x1"] <= root_gap and level(o)]
                 if nxt:
                     o = min(nxt, key=lambda o: o["x0"])
                     o["parts"] += g["parts"]
@@ -271,13 +295,34 @@ def find(gray, layout, tok, p=P):
     trusted = {id(s) for s in voltas + hooks}
     signs = voltas + [s for s in layout["syms"] if use_signs and s["cls"] in ("repeatMark_segno", "repeatMark_coda")
                       and s.get("p", 1) >= SIGN_P and above(s)]
+    def attached_mark(s):
+        """A confident accent, staccato, tenuto or fermata right over a note copisteria timed."""
+        if not p.get("attached_marks", False) or s.get("p", 1) < MARK_P:
+            return False
+        if not s["cls"].startswith(("artic", "fermata")):
+            return False
+        st = layout["staves"][s["staff"]]
+        sp = st["sp"]
+        x0, y0, x1, y1 = s["box"]
+        w, h = (x1 - x0) / sp, (y1 - y0) / sp
+        if s["cls"].startswith("fermata"):
+            if w < h or w > 4.5 or h > 3.0:
+                return False
+        elif w > 1.8 or h > 2.0:
+            return False
+        cx = (x0 + x1) / 2
+        for hd in heads:
+            if abs((hd[0] + hd[2]) / 2 - cx) <= 0.7 * sp and -0.5 * sp <= hd[1] - y1 <= 5.0 * sp:
+                return True
+        return False
+
     for s in layout["syms"]:
         sign = id(s) in trusted
         if s["cls"].startswith("repeatMark") and above(s):
             continue
         if not sign and not s["cls"].startswith(ERASE):
             continue
-        if not sign and p.get("trust_above", False) is False and above(s):
+        if not sign and p.get("trust_above", False) is False and above(s) and not attached_mark(s):
             if s["cls"].startswith(("note", "rest")):
                 if id(s) not in timed_ids:
                     continue
@@ -295,6 +340,7 @@ def find(gray, layout, tok, p=P):
     proposals = []
     two_rows = False
     prev_bottom = 0
+    ctxs = []
     for order, k in enumerate(staves):
         st = layout["staves"][k]
         sp = st["sp"]
@@ -340,6 +386,29 @@ def find(gray, layout, tok, p=P):
         band = [c["y1"] - c["y0"] for c in kept if (c["y1"] - c["y0"]) > 0.6 * sp
                 and (st["y0"] - top) - (c["y0"] + c["y1"]) / 2 <= p.get("chord_band", 7) * sp]
         wp = dict(p, _letter=float(np.percentile(band, p.get("letter_pct", 50)))) if band else p
+        ctxs.append((order, k, st, sp, top, left, frames, kept, wp))
+    # Letter spacing measured over the whole page's chord rows: a loosely set font (Real Book 3, "B m7 b5") spaces
+    # every chord alike, but one line rarely has enough letters to tell, and title or credit text on the first line
+    # pulls a single line's measure down.
+    page_ratio = None
+    if p.get("page_gap", False):
+        ratios = []
+        for (order, k, st, sp, top, left, frames, kept, wp) in ctxs:
+            tall = [c["y1"] - c["y0"] for c in kept if c["y1"] - c["y0"] > 0.6 * sp] or [1.5 * sp]
+            letter = wp.get("_letter") or float(np.percentile(tall, p.get("letter_pct", 50)))
+            row = sorted((c for c in kept if c["y1"] - c["y0"] > 0.6 * sp
+                          and (st["y0"] - top) - (c["y0"] + c["y1"]) / 2 <= p.get("chord_band", 7) * sp),
+                         key=lambda c: c["x0"])
+            for a, b in zip(row, row[1:]):
+                ov = min(a["y1"], b["y1"]) - max(a["y0"], b["y0"])
+                g = b["x0"] - a["x1"]
+                if 0 <= g <= 0.5 * letter and ov >= 0.5 * min(a["y1"] - a["y0"], b["y1"] - b["y0"]):
+                    ratios.append(g / letter)
+        if len(ratios) >= 8:
+            page_ratio = float(np.median(ratios))
+    for (order, k, st, sp, top, left, frames, kept, wp) in ctxs:
+        if page_ratio is not None:
+            wp = dict(wp, _page_gap=page_ratio)
         found = []
         for wd in words(kept, sp, wp):
             found.append(dict(wd, x0=wd["x0"] + left, x1=wd["x1"] + left, y0=wd["y0"] + top, y1=wd["y1"] + top,

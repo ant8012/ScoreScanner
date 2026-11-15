@@ -74,6 +74,8 @@ public enum ChordFinder {
     public var overlap = 0.25        // same line: vertical overlap as a fraction of the smaller height
     public var gapScale = 1.5, gapCap = 0.35
     public var chordBand = 7.0
+    public var attachedMarks = true  // erase confident accents, staccatos and fermatas sitting on a timed note
+    public var pageGap = true        // measure letter spacing over the whole page's chord rows, not line by line
     public init() {}
   }
 
@@ -110,6 +112,10 @@ public enum ChordFinder {
                       "dynam", "repeatMark", "breath", "caesura", "mordent", "trill", "tupletNum", "tuplet_", "arpeg",
                       "grpSym", "mRest", "barLine"]
   static let voltaP = 0.25, signP = 0.2
+  /// Articulations above a staff that belong to a note: copisteria is confident (0.9+) on real ones, sized like a
+  /// mark, and centred over the note they sit on. A handwritten chord letter it misreads as one is rarely confident
+  /// and is taller than wide (a big C read as a fermata at 0.51).
+  static let markP = 0.6
 
   // MARK: numpy helpers
 
@@ -273,7 +279,8 @@ public enum ChordFinder {
     }.map(\.element)
   }
 
-  static func words(_ input: [Component], sp: Double, p: Parameters, letterHeight: Double?) -> [Word] {
+  static func words(_ input: [Component], sp: Double, p: Parameters, letterHeight: Double?,
+                    pageGap: Double? = nil) -> [Word] {
     let comps = stableSorted(input) { Double($0.x0) }
     let tall = comps.map { Double($0.h) }.filter { $0 > 0.6 * sp }
     let letter = letterHeight ?? percentile(tall.isEmpty ? [1.5 * sp] : tall, p.letterPct)
@@ -286,12 +293,22 @@ public enum ChordFinder {
       if g >= 0 && g <= 0.5 * letter && ov >= 0.5 * Double(min(a.h, b.h)) { level.append(g) }
     }
     if level.count >= 8 { gap = min(max(gap, p.gapScale * median(level)), p.gapCap * letter) }
+    // The page's chord-row letter spacing (see find) widens the gap for pieces inside a chord (quality, extension,
+    // accidental) but not for a capital-height letter: in a loosely set font the next chord's root sits as close as
+    // the letters within one ("F m7 F#o7": 5 px either way), so a root keeps the line's own gap.
+    var wideGap = gap
+    if let r = pageGap { wideGap = max(gap, min(p.gapScale * r * letter, p.gapCap * letter)) }
+    func gapFor(_ c: Component) -> Double {
+      let h = Double(c.h)
+      let capital = h >= 0.85 * letter && h <= 1.25 * letter && Double(c.w) >= 0.5 * letter
+      return capital ? gap : wideGap
+    }
 
     var groups: [Group] = []
     for c in comps {
       var best: Group?, bestOv = 0.0
       for g in groups {
-        if Double(c.x0 - g.x1) > gap || c.x1 < g.x0 { continue }
+        if Double(c.x0 - g.x1) > gapFor(c) || c.x1 < g.x0 { continue }
         let ov = Double(min(g.y1, c.y1) - max(g.y0, c.y0))
         let need = p.overlap * Double(min(g.y1 - g.y0, c.y1 - c.y0))
         let frac = ov / Double(max(1, c.y1 - c.y0))
@@ -315,9 +332,15 @@ public enum ChordFinder {
         for g in groups {
           let h = Double(g.y1 - g.y0), w = Double(g.x1 - g.x0)
           if g.parts.count != 1 || h < 0.8 * letter || w > 1.3 * h { continue }
+          // level with the word after it, or with that word's first piece: an extension written raised
+          // ("C 9(#11)") sits higher as a whole word than its first glyph does
+          func level(_ o: Group) -> Bool {
+            if Double(min(o.y1, g.y1) - max(o.y0, g.y0)) >= 0.5 * min(h, Double(o.y1 - o.y0)) { return true }
+            guard let f = o.parts.min(by: { $0.x0 < $1.x0 }) else { return false }
+            return Double(min(f.y1, g.y1) - max(f.y0, g.y0)) >= 0.5 * min(h, Double(f.h))
+          }
           let nxt = groups.filter { o in
-            o !== g && Double(o.x0 - g.x1) >= 0 && Double(o.x0 - g.x1) <= rootGap
-              && Double(min(o.y1, g.y1) - max(o.y0, g.y0)) >= 0.5 * min(h, Double(o.y1 - o.y0))
+            o !== g && Double(o.x0 - g.x1) >= 0 && Double(o.x0 - g.x1) <= rootGap && level(o)
           }
           if let o = nxt.min(by: { $0.x0 < $1.x0 }) {
             o.parts += g.parts
@@ -447,11 +470,28 @@ public enum ChordFinder {
       (syms[$0].cls == "repeatMark_segno" || syms[$0].cls == "repeatMark_coda") && syms[$0].p >= signP && above(syms[$0])
     }
 
+    // A confident accent, staccato, tenuto or fermata right over a note copisteria timed.
+    func attachedMark(_ s: Symbol) -> Bool {
+      guard p.attachedMarks, s.p >= markP, s.cls.hasPrefix("artic") || s.cls.hasPrefix("fermata"),
+            let st = staffOf(s) else { return false }
+      let sp = st.sp
+      let w = (s.box.x1 - s.box.x0) / sp, h = (s.box.y1 - s.box.y0) / sp
+      if s.cls.hasPrefix("fermata") {
+        if w < h || w > 4.5 || h > 3.0 { return false }
+      } else if w > 1.8 || h > 2.0 {
+        return false
+      }
+      let cx = (s.box.x0 + s.box.x1) / 2
+      return heads.contains { hd in
+        abs((hd.x0 + hd.x1) / 2 - cx) <= 0.7 * sp && hd.y0 - s.box.y1 >= -0.5 * sp && hd.y0 - s.box.y1 <= 5.0 * sp
+      }
+    }
+
     for (i, s) in syms.enumerated() {
       let sign = trusted.contains(i)
       if s.cls.hasPrefix("repeatMark") && above(s) { continue }
       if !sign && !erase.contains(where: { s.cls.hasPrefix($0) }) { continue }
-      if !sign && above(s) {
+      if !sign && above(s) && !attachedMark(s) {
         if isNoteOrRest(s.cls) {
           if !timed.contains(i) { continue }
         } else if !((s.cls.hasPrefix("accid") || s.cls.hasPrefix("dots")) && besideNote(s)) {
@@ -473,6 +513,10 @@ public enum ChordFinder {
     var twoRows = false
     var prevBottom = 0.0
 
+    struct Line {
+      let ord: Int, k: Int, top: Int, left: Int, kept: [Component], frames: [Component], letterHeight: Double?
+    }
+    var lines: [Line] = []
     for (ord, k) in order.enumerated() {
       let st = L.staves[k]
       let sp = st.sp
@@ -512,8 +556,35 @@ public enum ChordFinder {
         Double(c.h) > 0.6 * sp && (st.y0 - Double(top)) - Double(c.y0 + c.y1) / 2 <= p.chordBand * sp
       }.map { Double($0.h) }
       let letterHeight: Double? = band.isEmpty ? nil : percentile(band, p.letterPct)
+      lines.append(Line(ord: ord, k: k, top: top, left: left, kept: kept, frames: frames, letterHeight: letterHeight))
+    }
 
-      var found = words(kept, sp: sp, p: p, letterHeight: letterHeight).map { w in
+    // Letter spacing measured over the whole page's chord rows: a loosely set font (Real Book 3, "B m7 b5") spaces
+    // every chord alike, but one line rarely has enough letters to tell.
+    var pageRatio: Double?
+    if p.pageGap {
+      var ratios: [Double] = []
+      for line in lines {
+        let st = L.staves[line.k], sp = st.sp
+        let tall = line.kept.map { Double($0.h) }.filter { $0 > 0.6 * sp }
+        let letter = line.letterHeight ?? percentile(tall.isEmpty ? [1.5 * sp] : tall, p.letterPct)
+        let row = stableSorted(line.kept.filter { c in
+          Double(c.h) > 0.6 * sp && (st.y0 - Double(line.top)) - Double(c.y0 + c.y1) / 2 <= p.chordBand * sp
+        }) { Double($0.x0) }
+        for (a, b) in zip(row, row.dropFirst()) {
+          let ov = Double(min(a.y1, b.y1) - max(a.y0, b.y0))
+          let g = Double(b.x0 - a.x1)
+          if g >= 0 && g <= 0.5 * letter && ov >= 0.5 * Double(min(a.h, b.h)) { ratios.append(g / letter) }
+        }
+      }
+      if ratios.count >= 8 { pageRatio = median(ratios) }
+    }
+
+    for line in lines {
+      let (ord, k, top, left, kept, frames) = (line.ord, line.k, line.top, line.left, line.kept, line.frames)
+      let st = L.staves[k]
+      let sp = st.sp
+      var found = words(kept, sp: sp, p: p, letterHeight: line.letterHeight, pageGap: pageRatio).map { w in
         Proposal(x0: w.x0 + left, y0: w.y0 + top, x1: w.x1 + left, y1: w.y1 + top, staff: k, order: ord, kind: .text,
                  parts: w.parts, ink: w.ink)
       }
