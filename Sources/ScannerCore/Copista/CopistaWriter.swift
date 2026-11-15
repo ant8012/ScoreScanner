@@ -78,10 +78,35 @@ extension Copista {
     var below = false
   }
 
+  /// A printed ending number ("1.", "2."): `x` in staff spaces from the bar's left edge, `top` in staff spaces above
+  /// the staff.
+  struct EndingGlyph: Equatable {
+    var number: String
+    var x: Double
+    var top: Double
+    /// The reader judged it real. A doubtful one (often handwritten) counts only where a repeat sign agrees.
+    var sure = true
+  }
+
+  /// Where an ending bracket runs, in measures of the part: `closed` when it ends with a down hook (a 1st ending
+  /// before its repeat), open ("discontinue") when it just stops (the last ending).
+  struct EndingSpan: Equatable {
+    var start: Int
+    var stop: Int
+    var number: String
+    var closed: Bool
+    /// Closed by the next ending of its set where no repeat sign was read: the brackets imply one.
+    var impliedRepeat = false
+  }
+
   struct Marks {
     var left: String?
     var right: String?
-    var endings: [String] = []
+    var endings: [EndingGlyph] = []
+    /// Tops (staff spaces above the staff) of bracket hooks that close at this bar's right end.
+    var endingHooks: [Double] = []
+    /// Tops of bracket hooks that open at this bar's left end.
+    var bracketStarts: [Double] = []
     var multirest: Int?
     var repeatBar = false
     var endClef: String?
@@ -157,6 +182,153 @@ extension Copista {
     static let barVoteFloor = log(0.01)
 
     static func lookup(_ table: [(String, String)], _ k: String) -> String? { table.first { $0.0 == k }?.1 }
+
+    /// Ending numbers and the hooks that close ending brackets, by staff and bar. Both stand above the staff they
+    /// belong to, so each goes to the nearest staff below it: the detector's own assignment can give a bracket
+    /// printed between two systems (under the lyrics of the line above) to the wrong line. A hook counts only where
+    /// it meets a bar line.
+    static let doubtfulEnding = 0.15
+
+    static func bracketMarks(_ rd: Reading) -> [Int: [Int: (endings: [EndingGlyph], hooks: [Double], opens: [Double])]] {
+      let L = rd.layout
+      var out: [Int: [Int: (endings: [EndingGlyph], hooks: [Double], opens: [Double])]] = [:]
+      for s in L.syms {
+        guard let r = rd.tok[s.i] else { continue }
+        let c = cls(rd, s.i)
+        let real = (r.realP ?? 0) >= Writer.real
+        guard (family(c) == "ending" && (r.realP ?? 0) >= doubtfulEnding)
+          || ((c == "spanEnd_tr" || c == "spanEnd_tl") && real)
+        else { continue }
+        var best: Int?
+        for (k, st) in L.staves.enumerated() where st.x0 - 2 * st.sp <= s.cx && s.cx <= st.x1 + 2 * st.sp {
+          let gap = (st.y0 - s.box.3) / st.sp
+          guard gap > -0.5 && gap <= 14 else { continue }
+          if best.map({ L.staves[$0].y0 > st.y0 }) ?? true { best = k }
+        }
+        guard let k = best else { continue }
+        let st = L.staves[k], sp = st.sp
+        let (j, _, _, _) = Front.band(L.syms, st, s.cx)
+        let bb = L.syms[st.bars[j]].box
+        let top = (st.y0 - s.box.1) / sp
+        if c == "spanEnd_tr" {
+          guard abs(s.box.2 - bb.2) < 2 * sp else { continue }
+          out[k, default: [:]][j, default: ([], [], [])].hooks.append(top)
+        } else if c == "spanEnd_tl" {
+          guard abs(s.box.0 - bb.0) < 2 * sp else { continue }
+          out[k, default: [:]][j, default: ([], [], [])].opens.append(top)
+        } else {
+          let glyph = EndingGlyph(
+            number: String(c.dropFirst("ending_".count)), x: (s.cx - bb.0) / sp, top: top, sure: real)
+          out[k, default: [:]][j, default: ([], [], [])].endings.append(glyph)
+        }
+      }
+      return out
+    }
+
+    static func endingNumbers(_ number: String) -> [Int] {
+      number.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// The bars each printed ending covers. The detector reads only the number ("1.") and the bracket's corner
+    /// hooks, so the bracket is followed to the hook that closes it at a bar line, at the number's height. Without
+    /// that hook, an ending followed by a higher one (the 1st before the 2nd) runs to its repeat sign, or to the bar
+    /// before the next ending; the last ending, drawn open, keeps its first bar. `bars` holds each measure's marks
+    /// (its top staff), `systems` the line each measure is on.
+    static func endingSpans(_ bars: [Marks?], systems: [Int]) -> [EndingSpan] {
+      // a bar's printed numbers: "1., 2." reads as two glyphs a few staff spaces apart; "x" is a number not read
+      func numbers(_ s: Int) -> ([Int], EndingGlyph) {
+        let glyphs = bars[s]!.endings.sorted { $0.x < $1.x }
+        let together = glyphs.filter { $0.x - glyphs[0].x < 4 }
+        return (Array(Set(together.compactMap { Int($0.number) })).sorted(), glyphs[0])
+      }
+      func repeatEnd(_ m: Int) -> Bool { m >= 0 && m < bars.count && bars[m]?.right == "barLine_repeat_end" }
+      // a doubtful number counts where a repeat sign agrees: one closes it on its line (a 1st ending), or it
+      // follows one (a 2nd ending)
+      func confirmed(_ s: Int) -> Bool {
+        if bars[s]!.endings.contains(where: \.sure) || repeatEnd(s - 1) { return true }
+        // two numbers a few bars apart confirm each other (a 1st and a 2nd ending)
+        let near = max(0, s - 4)...min(bars.count - 1, s + 4)
+        if near.contains(where: { $0 != s && !(bars[$0]?.endings.isEmpty ?? true) }) { return true }
+        for m in s..<bars.count where systems[m] == systems[s] {
+          if repeatEnd(m) { return true }
+          if m > s && (bars[m]?.left != nil || !(bars[m]?.endings.isEmpty ?? true)) { break }
+        }
+        return false
+      }
+      // an ending carried over a line break, its number printed again at the start of the next line without an
+      // opening hook, is one ending; a bracket that opens again is the next ending, whatever number was read
+      var starts: [Int] = []
+      var renumbered: [Int: [Int]] = [:]
+      for s in bars.indices where !(bars[s]?.endings.isEmpty ?? true) && confirmed(s) {
+        if let p = starts.last, !(p..<s).contains(where: repeatEnd), !(p + 1...s).contains(where: { bars[$0]?.left != nil }) {
+          let (nums, glyph) = numbers(s)
+          let before = renumbered[p] ?? numbers(p).0
+          let opens = (bars[s]?.bracketStarts ?? []).contains { abs($0 - glyph.top) <= 2 }
+          if s > 0, systems[s - 1] != systems[s], systems[s] == systems[p] + 1, nums == before, !opens { continue }
+          if s - p <= 6, let b = before.max(), (nums.max() ?? 0) <= b { renumbered[s] = [b + 1] }
+        }
+        starts.append(s)
+      }
+      var spans: [EndingSpan] = []
+      for (k, s) in starts.enumerated() {
+        if let last = spans.last, s <= last.stop { continue }
+        var (nums, glyph) = numbers(s)
+        if let r = renumbered[s] { nums = r }
+        // right after an ending closed by its repeat comes the next number ("2." misread as "1.", or not read)
+        let prev = spans.last.flatMap { $0.stop == s - 1 && $0.closed ? endingNumbers($0.number).max() : nil }
+        if nums.isEmpty || (prev != nil && nums.max()! <= prev!) { nums = [(prev ?? 0) + 1] }
+        // a 2nd ending after a repeat whose 1st ending was not found: the 1st runs back from the repeat to the
+        // bracket's opening hook on that line (at the 2nd's height), or is the repeat's own bar
+        if nums.min()! >= 2, repeatEnd(s - 1), spans.last?.stop != s - 1 {
+          var first = s - 1
+          for m in stride(from: s - 1, through: 0, by: -1) where systems[m] >= systems[s - 1] - 1 {
+            if m < s - 1 && (repeatEnd(m) || bars[m]?.left != nil) { break }
+            if (bars[m]?.bracketStarts ?? []).contains(where: { abs($0 - glyph.top) <= 1.5 }) {
+              first = m
+              break
+            }
+          }
+          if spans.last.map({ $0.stop < first }) ?? true {
+            spans.append(EndingSpan(
+              start: first, stop: s - 1,
+              number: (1..<nums.min()!).map(String.init).joined(separator: ", "), closed: true))
+          }
+        }
+        let next = starts.dropFirst(k + 1).first
+        let nextNums = next.map { renumbered[$0] ?? numbers($0).0 } ?? []
+        let lastBar = (bars.indices.last { systems[$0] <= systems[s] + 2 }) ?? s
+        // followed by the next ending of its set: the 1st before the 2nd (an unread number counts as the next)
+        // (a "1." is never the last, even when the "2." after it was not read)
+        let followed = nums.max()! == 1
+          || (next.map { $0 <= lastBar + 1 && (nextNums.isEmpty || nextNums.max()! > nums.max()!) } ?? false)
+        let end = min(followed ? lastBar : (bars.indices.last { systems[$0] == systems[s] } ?? s), (next ?? Int.max) - 1)
+        var stop: Int?, closed = false
+        for m in s...max(s, end) {
+          guard let marks = bars[m] else { continue }
+          if m > s && marks.left != nil {
+            stop = followed ? m - 1 : s
+            break
+          }
+          if marks.endingHooks.contains(where: { abs($0 - glyph.top) <= 1.5 }) {
+            stop = m; closed = true
+            break
+          }
+          if marks.right == "barLine_repeat_end" && (followed || m == s) {
+            stop = m; closed = true
+            break
+          }
+        }
+        var implied = false
+        if stop == nil, followed, let next {
+          stop = next - 1; closed = true
+          implied = !repeatEnd(next - 1)
+        }
+        spans.append(EndingSpan(
+          start: s, stop: stop ?? s, number: nums.map(String.init).joined(separator: ", "), closed: closed,
+          impliedRepeat: implied))
+      }
+      return spans
+    }
 
     static func floorDiv(_ a: Int, _ b: Int) -> Int { Int((Double(a) / Double(b)).rounded(.down)) }
     static func floorMod(_ a: Int, _ b: Int) -> Int { a - floorDiv(a, b) * b }
@@ -393,8 +565,6 @@ extension Copista {
           }
         } else if f == "barLine" {
           if c == "barLine_repeat_start" && s.cx < bmid { marks.left = "repeat_start" } else if barRight[c] != nil && s.cx >= bmid { marks.right = c }
-        } else if f == "ending" {
-          marks.endings.append(String(c.dropFirst("ending_".count)))
         } else if f == "clef" && s.cx > firstX {
           dirs.append(Dir(x: s.cx, kind: "clef", payload: clefOfCls(c)))
         }
@@ -1017,6 +1187,7 @@ extension Copista {
       }
       let singlePart = plans.count == 1
 
+      let brackets = bracketMarks(rd)
       func build(_ opening: String?) -> ([[[StaffBar?]]], [Double]) {
         var built: [[[StaffBar?]]] = []
         var fit: [Double] = []
@@ -1039,11 +1210,15 @@ extension Copista {
                 if let opening { state[ki].time = opening }
               }
               var (ev, dirs, marks) = events(rd, staff, j, clef: state[ki].clef, key: state[ki].key)
+              for jj in bars {
+                marks.endings += brackets[staff]?[jj]?.endings ?? []
+                marks.endingHooks += brackets[staff]?[jj]?.hooks ?? []
+                marks.bracketStarts += brackets[staff]?[jj]?.opens ?? []
+              }
               for j2 in bars.dropFirst() {
                 let (ev2, dirs2, marks2) = events(rd, staff, j2, clef: state[ki].clef, key: state[ki].key)
                 ev += ev2; dirs += dirs2
                 marks.right = marks2.right ?? marks.right
-                marks.endings += marks2.endings
                 marks.endClef = marks2.endClef ?? marks.endClef
                 marks.repeatBar = marks.repeatBar || marks2.repeatBar
               }
@@ -1123,7 +1298,9 @@ extension Copista {
         var lastKey: Int?, lastTime: String?, lastClefs = [String?](repeating: nil, count: pl.count)
         var meterShown = false
         var number = 0
-        var pendingEndings: [String] = []
+        let spans = endingSpans(measures.map { $0.compactMap { $0 }.first?.marks }, systems: columns.map(\.0))
+        let spanFrom = Dictionary(spans.map { ($0.start, $0) }, uniquingKeysWith: { a, _ in a })
+        let spanTo = Dictionary(spans.map { ($0.stop, $0) }, uniquingKeysWith: { a, _ in a })
         let multi = pl.count > 1
         for (mi, staves) in measures.enumerated() {
           number += 1
@@ -1168,13 +1345,11 @@ extension Copista {
           if let mr, singlePart, mr > 1, let attrs { attrs.sub("measure-style").sub("multiple-rest", mr) }
           let barLen = timeLen(time)
           let barEnd = barEnds[mi] ?? barLen
-          let starts = first.marks.endings
-          if first.marks.left != nil || !starts.isEmpty {
+          if first.marks.left != nil || spanFrom[mi] != nil {
             let bl = meas.sub("barline", nil, [("location", "left")])
             if first.marks.left != nil { bl.sub("bar-style", "heavy-light") }
-            for num in starts.prefix(1) { bl.sub("ending", nil, [("number", num), ("type", "start")]) }
+            if let span = spanFrom[mi] { bl.sub("ending", nil, [("number", span.number), ("type", "start")]) }
             if first.marks.left != nil { bl.sub("repeat", nil, [("direction", "forward")]) }
-            pendingEndings = Array(starts.prefix(1))
           }
           let opening = mi == 0 && first.marks.meter
           let keepShort = opening || shortRight.contains(first.marks.right ?? "")
@@ -1278,13 +1453,19 @@ extension Copista {
           }
           if opening && Q.zero < maxEnd && maxEnd < barLen { meas.set("implicit", "yes") }
           for (i, s) in staves.enumerated() { if let ec = s?.marks.endClef { lastClefs[i] = ec } }
-          let right = first.marks.right
-          if right != nil || !pendingEndings.isEmpty {
+          let span = spanTo[mi]
+          let right = span?.impliedRepeat == true ? "barLine_repeat_end" : first.marks.right
+          if right != nil || span != nil {
             let bl = meas.sub("barline", nil, [("location", "right")])
             if let right { bl.sub("bar-style", barRight[right]!) }
-            for num in pendingEndings { bl.sub("ending", nil, [("number", num), ("type", "stop")]) }
-            if right == "barLine_repeat_end" { bl.sub("repeat", nil, [("direction", "backward")]) }
-            pendingEndings = []
+            if let span {
+              bl.sub("ending", nil, [("number", span.number), ("type", span.closed ? "stop" : "discontinue")])
+            }
+            if right == "barLine_repeat_end" {
+              // the repeat inside a "1, 2." ending (or the 2nd of three) is played once more per extra number
+              let times = (spans.first { $0.start <= mi && mi <= $0.stop }).map { endingNumbers($0.number).max() ?? 1 } ?? 1
+              bl.sub("repeat", nil, times >= 2 ? [("direction", "backward"), ("times", times + 1)] : [("direction", "backward")])
+            }
           }
         }
       }
