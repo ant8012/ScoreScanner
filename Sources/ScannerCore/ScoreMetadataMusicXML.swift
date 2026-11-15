@@ -132,6 +132,7 @@ public enum ScoreMetadataMusicXML {
     insertPartNames(partNames, into: root)
     insertTempo(tempo, into: root)
     insertDirections(directions, into: root)
+    insertPlaybackJumps(into: root)
     return Data(("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + root.serialized()).utf8)
   }
 
@@ -432,6 +433,116 @@ public enum ScoreMetadataMusicXML {
         }
         measure.children.insert(contentsOf: nodes, at: directionIndex(in: measure))
       }
+    }
+  }
+
+  /// Adds the standard `<sound>` jump and marker attributes to navigation the score prints, so players follow it:
+  /// `segno`/`coda` on the signs, `dalsegno`/`dacapo` on D.S./D.C. (their words, "D.S. al Coda", still say how far),
+  /// `tocoda` on To Coda and `fine` on Fine. A jump is written only when its target is unambiguous: one segno at or
+  /// before a D.S., and for "al Coda" one To Coda after the jump target and one coda after the jump; for "al Fine"
+  /// one Fine. A sign in the same bar as its own D.S. or To Coda words is part of them, not a second target.
+  /// Anything missing or doubled stays words only: a player can read it, and a wrong jump would play wrong music.
+  static func insertPlaybackJumps(into root: XMLNode) {
+    enum Kind { case segno, coda, toCoda, fine, dalSegno(String), daCapo(String) }
+    struct Mark { let measure: Int; let kind: Kind; let direction: XMLNode; let node: XMLNode }
+    for part in root.all("part") {
+      var marks: [Mark] = []
+      for (index, measure) in part.all("measure").enumerated() {
+        for direction in measure.all("direction") {
+          let types = direction.all("direction-type")
+          if types.contains(where: { $0.first("segno") != nil }) {
+            marks.append(Mark(measure: index, kind: .segno, direction: direction, node: measure))
+          }
+          if types.contains(where: { $0.first("coda") != nil }) {
+            marks.append(Mark(measure: index, kind: .coda, direction: direction, node: measure))
+          }
+          let words = types.compactMap { $0.first("words")?.text }.joined(separator: " ")
+          guard let jump = LocalTextReader.navigation(words) else { continue }
+          let kind: Kind
+          switch jump {
+          case "Segno": kind = .segno
+          case "Coda": kind = .coda
+          case "To Coda": kind = .toCoda
+          case "Fine": kind = .fine
+          default:
+            let tail = jump.hasSuffix("al Coda") ? "coda" : jump.hasSuffix("al Fine") ? "fine" : ""
+            kind = jump.hasPrefix("D.S.") ? .dalSegno(tail) : .daCapo(tail)
+          }
+          marks.append(Mark(measure: index, kind: kind, direction: direction, node: measure))
+        }
+      }
+      guard !marks.isEmpty else { continue }
+      let words = marks.filter { if case .segno = $0.kind { return false }; if case .coda = $0.kind { return false }; return true }
+      func bars(_ match: (Kind) -> Bool) -> [Mark] { marks.filter { match($0.kind) } }
+      // a sign beside its own words belongs to them ("To Coda ⊕", "D.S. 𝄋 al Coda"); a sign and its name in one
+      // bar ("𝄌 Coda") are one marker
+      let toCodaBars = Set(bars { if case .toCoda = $0 { return true }; return false }.map(\.measure))
+      let dalSegnoBars = Set(bars { if case .dalSegno = $0 { return true }; return false }.map(\.measure))
+      var segnos: [Mark] = [], codas: [Mark] = []
+      for mark in marks {
+        switch mark.kind {
+        case .segno where !dalSegnoBars.contains(mark.measure):
+          if !segnos.contains(where: { $0.measure == mark.measure }) { segnos.append(mark) }
+        case .coda where !toCodaBars.contains(mark.measure):
+          if !codas.contains(where: { $0.measure == mark.measure }) { codas.append(mark) }
+        default: break
+        }
+      }
+      let toCodas = bars { if case .toCoda = $0 { return true }; return false }
+      let fines = bars { if case .fine = $0 { return true }; return false }
+      let segno = segnos.count == 1 ? segnos[0] : nil
+      let coda = codas.count == 1 ? codas[0] : nil
+      let toCoda = toCodas.count == 1 ? toCodas[0] : nil
+      let fine = fines.count == 1 ? fines[0] : nil
+      var usesCoda = false, usesFine = false
+      func sound(_ mark: Mark, _ attributes: [String: String], atEnd: Bool = false) {
+        if let existing = mark.direction.first("sound") {
+          existing.attributes.merge(attributes) { a, _ in a }
+        } else {
+          mark.direction.children.append(XMLNode("sound", attributes: attributes))
+        }
+        // D.S., D.C., To Coda and Fine act at the end of their bar: written at its start, MuseScore's import moves
+        // them to the end of the bar before, and the jump comes a bar early
+        if atEnd, let at = mark.node.children.firstIndex(where: { $0 === mark.direction }) {
+          mark.node.children.remove(at: at)
+          let end = mark.node.children.lastIndex { ["note", "forward", "backup"].contains($0.tag) }
+            .map { $0 + 1 } ?? mark.node.children.count
+          mark.node.children.insert(mark.direction, at: end)
+        }
+      }
+      func reachable(_ tail: String, from start: Int, jump: Int) -> Bool {
+        switch tail {
+        case "coda":
+          guard let toCoda, let coda, toCoda.measure >= start, toCoda.measure <= jump, coda.measure > toCoda.measure
+          else { return false }
+          usesCoda = true
+          return true
+        case "fine":
+          guard let fine, fine.measure >= start else { return false }
+          usesFine = true
+          return true
+        default: return true
+        }
+      }
+      for mark in words {
+        switch mark.kind {
+        case .dalSegno(let tail):
+          if let segno, segno.measure <= mark.measure, reachable(tail, from: segno.measure, jump: mark.measure) {
+            sound(mark, ["dalsegno": "segno"], atEnd: true)
+          }
+        case .daCapo(let tail):
+          if reachable(tail, from: 0, jump: mark.measure) { sound(mark, ["dacapo": "yes"], atEnd: true) }
+        default: break
+        }
+      }
+      if let segno, marks.contains(where: { if case .dalSegno = $0.kind { return $0.direction.first("sound") != nil }; return false }) {
+        sound(segno, ["segno": "segno"])
+      }
+      if usesCoda, let toCoda, let coda {
+        sound(toCoda, ["tocoda": "coda"], atEnd: true)
+        sound(coda, ["coda": "coda"])
+      }
+      if usesFine, let fine { sound(fine, ["fine": "yes"], atEnd: true) }
     }
   }
 

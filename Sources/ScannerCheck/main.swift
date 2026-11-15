@@ -13,6 +13,7 @@ import ScannerCore
 //   --chord-read-pages PAGES COP MODELS OUT.json   finder, crops and reader on pages --copista dumped (COP/cop-NAME)
 //   --read-image IMAGE MODELS OUT.xml   one page read as the apps read it, chords and text on this device
 //   --read-pdf PDF MODELS OUT.xml       the same for a whole PDF
+//   --add-jumps IN.xml - OUT.xml        only the playback jump pass (<sound> on printed D.S./D.C., To Coda, Fine)
 
 func writeChordCrops(image: Data, models: URL, output: URL) throws {
     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -83,6 +84,15 @@ do {
         for t in reading.text.staffText {
             print("TEXT: system \(t.system) bar \(t.bar + 1) [\(t.category)] \(t.text)")
         }
+    case "--add-jumps":
+        // the playback jump pass alone, on a MusicXML file (MODELS is ignored)
+        let scan = DocumentScanResult(
+            xml: try Data(contentsOf: input), rawXML: try Data(contentsOf: input), seconds: 0, staffCount: 1,
+            repairedMeasures: 0, pageCount: 1)
+        let out = try ScoreMetadataMusicXML.insertingRecognizedContent(
+            title: nil, composer: nil, arranger: nil, staffText: [], into: scan)
+        try out.xml.write(to: output)
+        print("wrote \(output.path)")
     case "--chord-read":
         print(try LocalChordReaderInspect.readCrops(models: models, crops: input, route: arguments[4]))
     case "--chord-crops":

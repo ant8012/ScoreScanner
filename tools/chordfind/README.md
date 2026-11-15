@@ -335,3 +335,11 @@ handwriting is the weak spot: "TUMP MONK", "2) SOMETIME"), no title invented on 
 composer right or nearly on 14, tempo/style wording on 8 (one cut short: "Med. S"; "Med. Up Swing", "Medium Waltz", "Ballad", "SLOWLY"), a
 metronome mark on 2, 31 staff text items (rehearsal letters, "Fine", "D.S.", "Till cue", "(play lower notes on repeat
 only)", a few misreads). Chord results unchanged (666 exact / 710 root / 14 false, 0 collisions).
+
+### Playback jumps (November 2026)
+
+Printed D.S./D.C. (al Coda, al Fine), To Coda, Fine and the segno and coda signs get the standard MusicXML `<sound>`
+attributes when their targets are unambiguous (otherwise they stay words). Checked by `ScannerCheck --add-jumps`
+on four eight-bar fixtures, imported and saved by Aria's engine (with the #33802 import fix) and played by desktop
+MuseScore 4.7.6: D.S. al Coda plays 1 2 3 4 5 6 2 3 4 7 8, D.C. al Fine 1-8 then 1-4; two segnos, or no segno,
+play straight through.

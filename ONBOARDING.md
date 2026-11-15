@@ -149,9 +149,12 @@ evidence inputs must be int64. `Vendor/copisteria/` records what the port change
   long classical scores.
 - On-device chords: an alternate chord in a second row over the line is left out when it falls on the main chord's
   beat (both would play).
-- Navigation is written as words. MuseScore turns words into jumps and markers only with "infer text type" on in
-  its MusicXML import (off in Aria's engine and by default on the desktop), so the scan shows D.S. al Coda but does
-  not play the jump.
+- Navigation is written as words plus the standard `<sound>` jump attributes (`ScoreMetadataMusicXML.
+  insertPlaybackJumps`), but only when the target is unambiguous: one segno before a D.S., one To Coda and one coda
+  for "al Coda", one Fine for "al Fine". A segno or coda sign copisteria missed (small ones often are) leaves the
+  jump as words. MuseScore 4.7.6 imports `<sound>` jumps only with "infer text type" on; Aria's engine carries the
+  upstream fix (#33802) that imports them regardless, and D.S./D.C./To Coda/Fine are written at the end of their
+  bar, where MuseScore expects them.
 - On-device text: handwritten headers (Real Book 6) read poorly; lyrics are kept out of staff text by position and
   by look (hyphenated syllables, lowercase words), not perfectly.
 
