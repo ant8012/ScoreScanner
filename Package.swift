@@ -2,8 +2,9 @@
 import PackageDescription
 
 // ScannerCore reads a score image or PDF into MusicXML: the notes on the device with copisteria (copista-2m, ONNX),
-// then chord names, title, composer and staff text with Apple's model on Private Cloud Compute. The ScoreScanner app
-// in this repository and Aria both use it.
+// chord names on the device too (a chord finder and a fine-tuned PP-OCRv6 recogniser, ONNX), and optionally the
+// title, composer and staff text with Apple's model on Private Cloud Compute. The ScoreScanner app in this
+// repository and Aria both use it.
 let package = Package(
     name: "ScoreScanner",
     platforms: [.iOS(.v16), .macOS(.v14)],

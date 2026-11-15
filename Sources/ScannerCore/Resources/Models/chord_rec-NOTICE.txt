@@ -1,0 +1,9 @@
+chord_rec.onnx, chord_rec_dict.txt
+
+The on-device chord reader is PaddleOCR's PP-OCRv6 small text recognition model, fine-tuned on chord symbols
+(tools/chordfind in the ScoreScanner repository) and exported to ONNX.
+
+PaddleOCR and its PP-OCRv6 models: Apache License 2.0, copyright PaddlePaddle Authors,
+https://github.com/PaddlePaddle/PaddleOCR. The licence text is the Apache License 2.0 (as in
+App/SampleAssets/Licenses/copisteria-Apache-2.0.txt). This file is a modified version of their model: its weights
+were trained further on synthetic chord-symbol images rendered with MuseScore.

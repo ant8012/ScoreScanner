@@ -20,6 +20,8 @@ public struct ScanResult: Sendable {
   /// The text above each staff cut into word boxes, each with its bar and beat (`ChordFinder`): the chord
   /// symbols to read, and where in the bar each one falls.
   public var chordWords: [ChordFinder.Proposal] = []
+  /// For each layout staff the finder's words refer to, where its words go in the score.
+  var chordWordStaffs: [Int: LocalChordReader.WordStaff] = [:]
 }
 
 /// Reads a page with copisteria (copista-2m): its detector and evidence models as ONNX, and its front end,
@@ -52,7 +54,13 @@ public enum Scanner {
     let xml = Data(read.xml.utf8)
     // Where each staff and its measures sit, so the chord and text passes can crop the page and place what
     // they read.
-    let staffs = Copista.Writer.placedStaves(read.reading).map { s -> ScannedStaff in
+    let placed = Copista.Writer.placedStaves(read.reading)
+    var wordStaffs: [Int: LocalChordReader.WordStaff] = [:]
+    for (index, s) in placed.enumerated() where s.layoutStaff >= 0 {
+      wordStaffs[s.layoutStaff] = LocalChordReader.WordStaff(
+        staff: index, lowerOfGrandStaff: s.grandStaff && s.staffInPart > 0, barMeasures: s.barMeasures)
+    }
+    let staffs = placed.map { s -> ScannedStaff in
       let geometry: [String: Any] = [
         "unit": s.sp, "minx": s.x0, "miny": s.y0, "maxx": s.x1, "maxy": s.y1,
         "barlines": s.measureStarts.map { ["x": $0] }, "voice": s.part, "system": s.system,
@@ -67,7 +75,7 @@ public enum Scanner {
     return ScanResult(
       xml: xml, rawXML: xml, staffs: staffs, page: Data(page.pixels), pageWidth: page.width,
       pageHeight: page.height, seconds: Date().timeIntervalSince(start), repairedMeasures: 0,
-      chordWords: chordWords)
+      chordWords: chordWords, chordWordStaffs: wordStaffs)
   }
 
   /// The meter a page's score ends in, for `scan(carriedMeter:)` on the next page.

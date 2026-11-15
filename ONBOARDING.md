@@ -26,11 +26,16 @@ apps call. In order:
    - `CopistaReader`: detections to staffs, systems, bars and voices.
    - `CopistaWriter`: MusicXML. `CopistaTidy`: drops impossible notes, caps voices (untouched bars stay identical).
    - PDFs: `PDFScanner` renders pages at 2480 px and `CopistaMerge` joins them.
-2. **Chord names, on Private Cloud Compute.** `ChordBands`, `ChordPresence` and `ChordImageCrops` cut one strip per
-   bar above each staff. `AppleChordReader` asks Apple's model to read them. `ChordGrammar` and `ChordText` check the
-   answers, and `ChordMusicXML` places them as `<harmony>` in the right bar.
-3. **Page text, on Private Cloud Compute.** `ScoreTextImageCrops` and `AppleScoreTextReader` read the title,
-   composer, tempo, instrument names and staff text. `ScoreMetadataMusicXML` writes them in.
+2. **Chord names, on the device** (`chordReader: .onDevice`, the default). `ChordFinder` (a port of
+   `tools/chordfind/find.py`, kept identical by `finder_parity.py`) finds each word above the staves with its bar and
+   beat. `LocalChordReader` cuts it as `export_crops.py` does and reads it with the round 3 PP-OCRv6 small model
+   (`chord_rec.onnx`, from `export_onnx.py`). `ChordText` judges the reading, and `ChordMusicXML` writes it as
+   `<harmony>` at the finder's measure and beat. A page with a single chord-like word is taken to print none.
+   With `chordReader: .appleModel` the old route runs instead: `ChordBands`, `ChordPresence` and `ChordImageCrops`
+   cut one strip per bar and `AppleChordReader` asks Apple's model.
+3. **Page text, on Private Cloud Compute**, only with `readStaffText`. `ScoreTextImageCrops` and
+   `AppleScoreTextReader` read the title, composer, tempo, instrument names and staff text.
+   `ScoreMetadataMusicXML` writes them in.
 4. **Checks.** `ScoreTimeSignatureMusicXML` gives an overfull bar a time signature of its own length with
    "check bar" above it, so MuseScore (and Aria) open the file.
 
@@ -135,8 +140,10 @@ evidence inputs must be int64. `Vendor/copisteria/` records what the port change
 - Two-page spreads read as fake multi-part systems; one page per photo is expected.
 - Photos and photocopies: a page edge in the margin and a curled staff are handled (`Front.edgeRules`,
   `Front.joinSplit`), but the OpenScore check can't show these; check them on real photos.
-- Cloud chord reading sends crops for every bar even on pages with no chord symbols, which uses up the quota on
+- The Apple chord route sends crops for every bar even on pages with no chord symbols, which uses up the quota on
   long classical scores.
+- On-device chords: an alternate chord in a second row over the line is left out when it falls on the main chord's
+  beat (both would play). Rehearsal marks, D.S./Coda and Fine are not read on the device yet.
 
 ## Third-party code
 

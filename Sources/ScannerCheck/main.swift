@@ -8,6 +8,11 @@ import ScannerCore
 //   --chord-crops IMAGE MODELS OUTDIR   the chord strips the app sends for reading, one PGM per bar
 //   --chordfind IMAGE COPISTA_DIR OUT.json   the chord finder's word boxes, bars and beats for one page, from the
 //                                            layout.json and tok.json --copista wrote (parity with find.py)
+//   --chord-read CROPS_DIR MODELS ROUTE       the on-device chord reader on export_crops.py crops, writing
+//                                            CROPS_DIR/results-ROUTE.json (parity with onnx_bench.py)
+//   --chord-read-pages PAGES COP MODELS OUT.json   finder, crops and reader on pages --copista dumped (COP/cop-NAME)
+//   --read-image IMAGE MODELS OUT.xml   one page read as the apps read it, chords on this device, no Apple model
+//   --read-pdf PDF MODELS OUT.xml       the same for a whole PDF
 
 func writeChordCrops(image: Data, models: URL, output: URL) throws {
     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -30,6 +35,11 @@ func writeChordCrops(image: Data, models: URL, output: URL) throws {
 
 do {
     let arguments = CommandLine.arguments
+    if arguments.count == 6, arguments[1] == "--chord-read-pages" {
+        let url = { URL(fileURLWithPath: arguments[$0]) }
+        print(try LocalChordReaderInspect.readPages(pages: url(2), copista: url(3), models: url(4), output: url(5)))
+        exit(0)
+    }
     guard arguments.count == 5 else {
         throw ScannerError.invalid(
             "Usage: ScannerCheck --copista|--scan-image|--scan-pdf|--chord-crops|--chordfind INPUT MODELS OUTPUT")
@@ -51,6 +61,22 @@ do {
         print(try ChordFinderInspect.runScan(image: input, models: models, output: output))
     case "--chordfind":
         print(try ChordFinderInspect.run(image: input, copista: models, output: output))
+    case "--read-image", "--read-pdf":
+        // chords on this device; title and staff text off, so nothing is sent to Apple's model
+        let options = ScoreReadOptions(readChordNames: true, readStaffText: false, chordReader: .onDevice)
+        let data = try Data(contentsOf: input)
+        let start = Date()
+        let reading = arguments[1] == "--read-image"
+            ? try await ScoreReader.read(image: data, models: models, options: options) { print($0) }
+            : try await ScoreReader.read(pdf: data, models: models, options: options) { print($0) }
+        try reading.score.xml.write(to: output)
+        let counts = reading.chords.counts
+        print("READ PASS: \(reading.chordCount) chords in the score (accepted \(counts?.accepted ?? 0), unusual "
+            + "\(counts?.unusual ?? 0), blocked \(counts?.blocked ?? 0)), chords \(String(format: "%.2f", reading.chords.seconds))s, "
+            + "total \(String(format: "%.2f", Date().timeIntervalSince(start)))s")
+        if let note = reading.chords.routeNote { print("NOTE: \(note)") }
+    case "--chord-read":
+        print(try LocalChordReaderInspect.readCrops(models: models, crops: input, route: arguments[4]))
     case "--chord-crops":
         try writeChordCrops(image: Data(contentsOf: input), models: models, output: output)
     default:

@@ -44,6 +44,11 @@ enum ChordTiming {
       bar.labels[$0].x0 < bar.labels[$1].x0
     }
     guard !indices.isEmpty else { return }
+    // Beats the chord finder took from the notes under each chord (in quarter notes) are kept as they are.
+    if indices.allSatisfy({ bar.labels[$0].timingSource == "finder" && bar.labels[$0].beat != nil }) {
+      for index in indices { bar.labels[index].beatUnit = 4 }
+      return
+    }
     let signature = signature ?? fallback
     let meter = normalized(signature)
     if let meter, let beats = defaults(meter: meter, count: indices.count) {

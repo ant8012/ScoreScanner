@@ -943,6 +943,10 @@ extension Copista {
       let part: Int, system: Int, grandStaff: Bool
       let sp: Double, x0: Double, x1: Double, y0: Double, y1: Double
       let measureStarts: [Double]
+      /// The layout staff it was written from, its place in its part (0 the upper staff of a grand staff), and for
+      /// each of the layout staff's bars the measure (0 the first of this staff's measures) it belongs to.
+      var layoutStaff = -1, staffInPart = 0
+      var barMeasures: [Int] = []
     }
 
     static func placedStaves(_ rd: Reading) -> [PlacedStaff] {
@@ -963,10 +967,15 @@ extension Copista {
               lefts[cols[j]] = min(lefts[cols[j]] ?? .infinity, box.0)
               right = max(right, box.2)
             }
-            let starts = lefts.keys.sorted().map { lefts[$0]! }
+            let columns = lefts.keys.sorted()
+            let starts = columns.map { lefts[$0]! }
             guard let left = starts.first, right > left else { continue }
-            out.append(PlacedStaff(part: n, system: si, grandStaff: pl.count == 2, sp: st.sp, x0: left, x1: right,
-                                   y0: st.y0, y1: st.y1, measureStarts: Array(starts.dropFirst())))
+            var placed = PlacedStaff(part: n, system: si, grandStaff: pl.count == 2, sp: st.sp, x0: left, x1: right,
+                                     y0: st.y0, y1: st.y1, measureStarts: Array(starts.dropFirst()))
+            placed.layoutStaff = k
+            placed.staffInPart = pl.firstIndex(of: pos) ?? 0
+            placed.barMeasures = cols.map { columns.firstIndex(of: $0) ?? 0 }
+            out.append(placed)
           }
         }
       }

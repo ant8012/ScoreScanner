@@ -1,12 +1,25 @@
 import Foundation
 
-/// How a score is read. The notes are always read on this device; the rest is read by Apple's model.
+/// Which reader names the chord symbols.
+public enum ChordReader: String, Sendable, CaseIterable {
+  /// The chord finder and a chord recogniser that run on this device (`LocalChordReader`). No network.
+  case onDevice
+  /// Apple's model, on Private Cloud Compute (bar strips).
+  case appleModel
+}
+
+/// How a score is read. The notes are always read on this device; chord names on this device too by default, or by
+/// Apple's model; title, composer and staff text by Apple's model.
 public struct ScoreReadOptions: Sendable {
   /// Read the chord names above each staff.
   public var readChordNames = true
-  /// Read rehearsal letters, D.S./Fine and section names. Only on pages that print chord names (lead sheets): on
-  /// other pages the model has invented them. With chord reading off, this switch alone decides.
+  /// Read rehearsal letters, D.S./Fine and section names with Apple's model. Only on pages that print chord names
+  /// (lead sheets): on other pages the model has invented them. With chord reading off, this switch alone decides.
+  /// With the on-device chord reader it also decides whether the title and composer are read: off, a reading never
+  /// uses Apple's model.
   public var readStaffText = true
+  /// Which reader names the chords.
+  public var chordReader = ChordReader.onDevice
   /// Send the model's requests to Private Cloud Compute. The on-device model is not accurate enough for scores.
   public var preferPrivateCloud = true
   /// Let a reading that prefers Private Cloud Compute finish on the on-device model when PCC is unavailable or a
@@ -20,13 +33,23 @@ public struct ScoreReadOptions: Sendable {
 
   public init(
     readChordNames: Bool = true, readStaffText: Bool = true, preferPrivateCloud: Bool = true,
-    allowOnDeviceFallback: Bool = false, cloudRequests: Int = ScoreReadOptions.defaultCloudRequests
+    allowOnDeviceFallback: Bool = false, cloudRequests: Int = ScoreReadOptions.defaultCloudRequests,
+    chordReader: ChordReader = .onDevice
   ) {
+    self.chordReader = chordReader
     self.readChordNames = readChordNames
     self.readStaffText = readStaffText
     self.preferPrivateCloud = preferPrivateCloud
     self.allowOnDeviceFallback = allowOnDeviceFallback
     self.cloudRequests = min(max(cloudRequests, Self.cloudRequestRange.lowerBound), Self.cloudRequestRange.upperBound)
+  }
+
+  /// Whether a reading with these options asks Apple's model anything. Off, it runs entirely on this device.
+  public var usesAppleModel: Bool {
+    switch chordReader {
+    case .appleModel: readChordNames || readStaffText
+    case .onDevice: readStaffText
+    }
   }
 }
 
@@ -69,18 +92,20 @@ public enum ScoreReader {
     progress: @escaping @Sendable (String) -> Void = { _ in }
   ) async throws -> ScoreReading {
     await configure(options)
+    let local = try localModel(models: models, options: options)
     let detached = Task.detached(priority: .userInitiated) {
       try Scanner.scan(image: image, models: models, title: title, progress: progress)
     }
     // The model loads while the notes are read, so the first batch is not also paying for the load.
-    AppleChordReader.prewarm(preferPrivateCloud: options.preferPrivateCloud)
+    if options.usesAppleModel { AppleChordReader.prewarm(preferPrivateCloud: options.preferPrivateCloud) }
     let scan = try await withTaskCancellationHandler {
       try await detached.value
     } onCancel: {
       detached.cancel()
     }
     try Task.checkCancellation()
-    let page = try await readPage(scan, number: 1, header: true, options: options, prefix: "", progress: progress)
+    let page = try await readPage(
+      scan, number: 1, header: true, options: options, local: local, prefix: "", progress: progress)
     try Task.checkCancellation()
     let metadata = page.text.metadata
     let score = try ScoreMetadataMusicXML.insertingRecognizedContent(
@@ -98,6 +123,7 @@ public enum ScoreReader {
     progress: @escaping @Sendable (String) -> Void = { _ in }
   ) async throws -> ScoreReading {
     await configure(options)
+    let local = try localModel(models: models, options: options)
     let count = try PDFScanner.pageCount(data: data)
     var pages: [ScanResult] = []
     var chordAnalyses: [AppleChordAnalysis] = []
@@ -115,7 +141,7 @@ public enum ScoreReader {
         return try Scanner.scan(image: image, models: models, carriedMeter: carriedMeter) { progress(prefix + $0) }
       }
     }
-    AppleChordReader.prewarm(preferPrivateCloud: options.preferPrivateCloud)
+    if options.usesAppleModel { AppleChordReader.prewarm(preferPrivateCloud: options.preferPrivateCloud) }
     var pending: Task<ScanResult, Error>? = scanPage(0, carriedMeter: nil)
     for index in 0..<count {
       try Task.checkCancellation()
@@ -132,7 +158,8 @@ public enum ScoreReader {
         }
         pending = number < count ? scanPage(number, carriedMeter: Scanner.lastMeter(of: scan.xml)) : nil
         page = try await readPage(
-          scan, number: number, header: index == 0, options: options, prefix: prefix, progress: progress)
+          scan, number: number, header: index == 0, options: options, local: local, prefix: prefix,
+          progress: progress)
       } catch {
         pending?.cancel()
         throw error
@@ -174,10 +201,22 @@ public enum ScoreReader {
   /// can turn chord and text reading off and still read the notes.
   public static var cloudReadingAvailable: Bool { AppleModelRoute.cloudAvailable }
 
+  /// Whether the on-device chord reader's model ships in `models` (it does in this package), so chords can be read
+  /// with no network and on any supported device.
+  public static func localChordReadingAvailable(models: URL = Scanner.bundledModels) -> Bool {
+    LocalChordReader.available(models: models)
+  }
+
   /// One line on what this build can read with Apple's model, for a settings screen.
   public static var modelSupportDescription: String { AppleChordReader.buildSupportDescription }
 
   // MARK: - Internals
+
+  /// The on-device chord model, loaded once per reading when the options read chords with it.
+  private static func localModel(models: URL, options: ScoreReadOptions) throws -> LocalChordReader.Model? {
+    guard options.readChordNames, options.chordReader == .onDevice else { return nil }
+    return try LocalChordReader.Model(models: models)
+  }
 
   private static func configure(_ options: ScoreReadOptions) async {
     AppleModelRoute.setFallbackAllowed(options.allowOnDeviceFallback)
@@ -199,9 +238,13 @@ public enum ScoreReader {
   /// them the model has invented rehearsal letters and instrument names, and their headers are still read. With
   /// chord reading off there is no chord check, so staff text follows its own switch.
   private static func readPage(
-    _ scan: ScanResult, number: Int, header: Bool, options: ScoreReadOptions, prefix: String,
-    progress: @escaping @Sendable (String) -> Void
+    _ scan: ScanResult, number: Int, header: Bool, options: ScoreReadOptions, local: LocalChordReader.Model?,
+    prefix: String, progress: @escaping @Sendable (String) -> Void
   ) async throws -> PageReading {
+    if options.chordReader == .onDevice {
+      return try await readPageOnDevice(
+        scan, number: number, header: header, options: options, local: local, prefix: prefix, progress: progress)
+    }
     let crops = options.readChordNames ? try ChordImageCrops.from(scan) : []
     // the reader states the meters it reads, so the opening time signature is not asked for
     let textCrops = try ScoreTextImageCrops.from(scan, includeHeader: header).filter { $0.kind != .initialMeter }
@@ -247,6 +290,57 @@ public enum ScoreReader {
           .map { ChordCropImage(name: $0.name, png: $0.png) }
       }
     return PageReading(scan: placed, chords: chords, text: text, cropImages: images)
+  }
+
+  /// One page with the chords read on this device. Title, composer and staff text are read by Apple's model only
+  /// when `readStaffText` is on; otherwise nothing leaves the device.
+  private static func readPageOnDevice(
+    _ scan: ScanResult, number: Int, header: Bool, options: ScoreReadOptions, local: LocalChordReader.Model?,
+    prefix: String, progress: @escaping @Sendable (String) -> Void
+  ) async throws -> PageReading {
+    let report: @Sendable (String) -> Void = { progress(prefix + $0) }
+    var placed = scan
+    var chords = AppleChordAnalysis(route: "not read", routeNote: nil, crops: [], seconds: 0)
+    if let local {
+      (placed, chords) = try LocalChordReader.read(scan, model: local, page: number, progress: report)
+    }
+    var text = AppleScoreTextAnalysis(
+      route: "not read", routeNote: nil, metadata: nil, initialTimeSignature: nil, staffText: [], seconds: 0)
+    if options.readStaffText {
+      let textCrops = try ScoreTextImageCrops.from(scan, includeHeader: header).filter { $0.kind != .initialMeter }
+      let headerCrops = textCrops.filter { $0.kind == .header }
+      let systemCrops = textCrops.filter { $0.kind == .system }
+      let cloud = options.preferPrivateCloud
+      let headerText: AppleScoreTextAnalysis? = headerCrops.isEmpty
+        ? nil
+        : try await AppleScoreTextReader.analyze(
+          crops: headerCrops, preferPrivateCloud: cloud, page: number, readStaffText: false, progress: report)
+      let printsChords = options.readChordNames ? chords.chords.contains { $0.acceptedChord != nil } : true
+      let staffText: AppleScoreTextAnalysis? = printsChords && !systemCrops.isEmpty
+        ? try await AppleScoreTextReader.analyze(
+          crops: systemCrops, preferPrivateCloud: cloud, page: number, readStaffText: true, progress: report)
+        : nil
+      let parts = [headerText, staffText].compactMap { $0 }
+      var notes = parts.compactMap(\.routeNote)
+      if !printsChords && !systemCrops.isEmpty {
+        notes.append("Staff text was not read: the page shows no chord symbols.")
+      }
+      text = AppleScoreTextAnalysis(
+        route: parts.isEmpty ? "not read" : Array(Set(parts.map(\.route))).sorted().joined(separator: " + "),
+        routeNote: notes.isEmpty ? nil : notes.joined(separator: "\n"),
+        metadata: headerText?.metadata, initialTimeSignature: nil,
+        staffText: parts.flatMap(\.staffText), seconds: parts.reduce(0) { $0 + $1.seconds })
+    }
+    if local == nil {
+      // no chords read: the page as scanned, without its pixels
+      placed = ScanResult(
+        xml: scan.xml, rawXML: scan.rawXML, staffs: scan.staffs, page: Data(), pageWidth: scan.pageWidth,
+        pageHeight: scan.pageHeight, seconds: scan.seconds, repairedMeasures: 0)
+    }
+    placed = ScanResult(
+      xml: placed.xml, rawXML: placed.rawXML, staffs: placed.staffs, page: Data(), pageWidth: placed.pageWidth,
+      pageHeight: placed.pageHeight, seconds: placed.seconds + text.seconds, repairedMeasures: 0)
+    return PageReading(scan: placed, chords: chords, text: text, cropImages: [])
   }
 
   private static func finished(

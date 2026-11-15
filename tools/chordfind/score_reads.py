@@ -130,8 +130,11 @@ def harmony_text(h):
                 "none": "NC"}.get(kind.text if kind is not None else "", kind.text if kind is not None else "")
     if text == "NC" or (kind is not None and kind.text == "none"):
         return "N.C."
-    degrees = "".join({"-1": "b", "1": "#"}.get(d.findtext("degree-alter") or "", "") + (d.findtext("degree-value") or "")
-                      for d in h.findall("degree") if d.findtext("degree-type") != "subtract")
+    # ScannerCore writes the printed suffix as kind@text and the alterations again as degrees (for playback), so
+    # degrees only spell the chord when there is no text
+    degrees = "" if kind is not None and kind.get("text") is not None else "".join(
+        {"-1": "b", "1": "#"}.get(d.findtext("degree-alter") or "", "") + (d.findtext("degree-value") or "")
+        for d in h.findall("degree") if d.findtext("degree-type") != "subtract")
     bstep = h.findtext("bass/bass-step")
     bass = ("/" + bstep + {"-1": "b", "1": "#"}.get(h.findtext("bass/bass-alter") or "", "")) if bstep else ""
     return step + alter + text + degrees + bass
@@ -142,8 +145,15 @@ def from_xml(pairs):
     for pair in pairs:
         chart, path = pair.split("=", 1)
         root_el = ET.parse(path).getroot()
-        part = root_el.find("part")
-        for measure in part.findall("measure"):
+        # every part, in page order: system by system, the parts' lines top to bottom within each
+        systems = []
+        for p, part in enumerate(root_el.findall("part")):
+            system = 0
+            for measure in part.findall("measure"):
+                if measure.find("print[@new-system='yes']") is not None and measure is not part.find("measure"):
+                    system += 1
+                systems.append((system, p, len(systems), measure))
+        for _, _, _, measure in sorted(systems, key=lambda t: t[:3]):
             for h in measure.findall("harmony"):
                 got.setdefault(chart, []).append(harmony_text(h))
     return got

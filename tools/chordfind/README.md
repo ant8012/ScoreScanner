@@ -277,3 +277,25 @@ identical.
 17 unseen pages (5 per book, less two photos and a text page): 968 -> 948 crops, 501 chord readings either way.
 Every changed crop improved: F7#9 four times and GΔ7 on Real Book 3 pages are whole (were F7 + #9, G + Δ + 7), 12
 fermata and accent crops are gone. No chord lost, no new false chord.
+
+### On-device reader in ScannerCore (November 2026)
+
+`export_onnx.py` exports round 3 to ONNX (`chord_rec.onnx`, 21 MB, with `chord_rec_dict.txt`); paddle2onnx 2.1
+cannot convert Paddle 3.3's `linear_v2`, so the export swaps it for the same matmul + add. `onnx_bench.py` reads crops
+with it: identical text to the Paddle model on all 1,187 benchmark crops (read one at a time). `LocalChordReader`
+(Swift) cuts crops as `export_crops.py` does (Pillow's Lanczos, bit for bit) and prepares the model input as PaddleX
+does (OpenCV's fixed-point bilinear resize): `ScannerCheck --chord-read` and `--chord-read-pages` give the same text
+as Python on every crop and every word of the 20 test pages (confidence differs slightly on about 1 crop in 50, junk
+crops near OpenCV's ARM rounding; it is not used to accept chords).
+
+| 768 test chords | Exact | Root | False chords |
+| --- | --- | --- | --- |
+| Benchmark grammar (`ocr_bench`/`score_reads.is_chord`) | 661 | 707 | 33 |
+| The app's check (`ChordText.modelSymbols`) on the same crops | 672 | 717 | 20 |
+| In the written MusicXML (`ScannerCheck --read-image`, `score_reads.py xml`) | 662 | 707 | 23 |
+
+The score loses 7 chords on purpose: alternates in a second row over the line that fall on the main chord's beat
+(both would play). Pages read offline in 3-4.5 s on a Mac (about 1 s of it chords); a page with a single
+chord-like word is taken to print none (a piano photo read one "E"). Aria's engine imports the MusicXML with every
+chord (21/21, 32/32, 47/47 on three pages), saved as format 4.70. `score_reads.py xml` now reads every part in page
+order and spells a chord from kind@text when present (ScannerCore also writes alterations as degrees).

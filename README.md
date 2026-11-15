@@ -4,9 +4,12 @@ Reads printed sheet music (a photo, a camera scan or a PDF) into MusicXML on iPh
 
 - **Notes** are read on the device by a Swift port of KobiMusic's
   [copisteria](https://github.com/kobimusic/copisteria) reader (copista-2m, Apache-2.0), run with ONNX Runtime.
-- **Chord names, title, composer, tempo, instrument names and staff text** are read from the page by Apple's
-  Foundation Models on Private Cloud Compute (iOS 27). The on-device model is not used unless a caller turns
-  `allowOnDeviceFallback` on.
+- **Chord names** are read on the device too: a chord finder cuts each word above the staves and a PP-OCRv6 small
+  text recogniser fine-tuned on chord symbols reads it (ONNX, no network, any supported device). Apple's model can
+  still read them instead (`chordReader: .appleModel`), for comparison.
+- **Title, composer, tempo, instrument names and staff text** are read from the page by Apple's Foundation Models
+  on Private Cloud Compute (iOS 27), only when `readStaffText` is on. The on-device Apple model is not used unless a
+  caller turns `allowOnDeviceFallback` on.
 
 The repository holds two things:
 
@@ -26,13 +29,16 @@ reading.title                                   // the printed title, if read
 reading.chordCount                              // chord symbols placed in the score
 ```
 
-`ScoreReader.read(image:)` reads one page image. `ScoreReadOptions` turns chord and staff-text reading on or off
-and sets how many Private Cloud Compute requests run at once. `ScoreReader.cloudReadingAvailable` says whether
-Apple's model can be used here; without it, read with `readChordNames: false, readStaffText: false` to get the
-notes only. The models ship inside the package (`Sources/ScannerCore/Resources/Models`, 16 MB).
+`ScoreReader.read(image:)` reads one page image. `ScoreReadOptions` turns chord and staff-text reading on or off,
+picks the chord reader (`chordReader`, `.onDevice` by default) and sets how many Private Cloud Compute requests run
+at once. With `readStaffText: false` and the on-device chord reader a reading never leaves the device
+(`ScoreReadOptions.usesAppleModel` is false): notes and chords, no title. `ScoreReader.cloudReadingAvailable` says
+whether Apple's model can be used here. The models ship inside the package (`Sources/ScannerCore/Resources/Models`,
+37 MB: copista-2m 16 MB, the chord reader 21 MB).
 
-The package supports iOS 16 and macOS 14; reading chords and text needs iOS 27 and an SDK that has
-FoundationModels. Read one score at a time: request limits are shared by the process.
+The package supports iOS 16 and macOS 14; notes and chords read on all of them. Staff text and the Apple chord
+route need iOS 27 and an SDK that has FoundationModels. Read one score at a time: request limits are shared by the
+process.
 
 What the reader writes:
 
@@ -55,6 +61,7 @@ swift run -c release ScannerCheck --scan-pdf score.pdf Sources/ScannerCore/Resou
 swift run -c release ScannerCheck --scan-image page.jpg Sources/ScannerCore/Resources/Models out.musicxml
 swift run -c release ScannerCheck --copista page.jpg Sources/ScannerCore/Resources/Models outdir
 swift run -c release ScannerCheck --chord-crops page.jpg Sources/ScannerCore/Resources/Models outdir
+swift run -c release ScannerCheck --read-image page.jpg Sources/ScannerCore/Resources/Models out.musicxml   # offline
 ```
 
 The app:
