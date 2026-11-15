@@ -533,7 +533,8 @@ struct ChordTests {
       ChordMusicXML.nearestKind(suffix).degrees.map { "\($0.2) \($0.0) \($0.1)" }
     }
     #expect(ChordMusicXML.nearestKind("7sus4(b9)").kind == "suspended-fourth")
-    #expect(degrees("7sus4(b9)") == ["add 7 0", "alter 9 -1"])
+    // MuseScore's chord list spells 7susb9 as add7 addb9: on a sus chord an altered ninth is an added degree
+    #expect(degrees("7sus4(b9)") == ["add 7 0", "add 9 -1"])
     #expect(ChordMusicXML.nearestKind("add9").kind == "major")
     #expect(degrees("add9") == ["add 9 0"])
     #expect(ChordMusicXML.nearestKind("m(maj7)").kind == "major-minor")

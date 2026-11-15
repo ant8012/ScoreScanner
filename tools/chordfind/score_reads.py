@@ -41,6 +41,7 @@ def norm(s):
     rest = re.sub(r"^\+", "aug", rest)
     if rest == "maj":
         rest = ""
+    rest = rest.replace("sus4", "sus")   # sus alone means a suspended fourth
     return root + acc + rest + ("/" + bass if bass else "")
 
 

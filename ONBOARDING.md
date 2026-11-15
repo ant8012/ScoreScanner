@@ -33,9 +33,14 @@ apps call. In order:
    `<harmony>` at the finder's measure and beat. A page with a single chord-like word is taken to print none.
    With `chordReader: .appleModel` the old route runs instead: `ChordBands`, `ChordPresence` and `ChordImageCrops`
    cut one strip per bar and `AppleChordReader` asks Apple's model.
-3. **Page text, on Private Cloud Compute**, only with `readStaffText`. `ScoreTextImageCrops` and
-   `AppleScoreTextReader` read the title, composer, tempo, instrument names and staff text.
-   `ScoreMetadataMusicXML` writes them in.
+3. **Page text, on the device** (`textReader: .onDevice`, the default), with `readStaffText`. `LocalTextReader`
+   reads with the standard PP-OCRv6 small model (`text_rec.onnx`): the header lines over the first system (title,
+   composer, tempo), the finder's words that are not chords (joined into phrases; boxed ones are rehearsal marks), the
+   letters the chord pass set aside at a line's start (unboxed rehearsal letters), and navigation under the last
+   staff. Navigation is spelled as MuseScore's import matches it (D.S. al Coda, To Coda, Fine). A metronome number
+   takes its beat from the printed note (half, quarter, dotted) when there is one, else from the meter (6/8 dotted
+   quarter, 2/2 half). `ScoreMetadataMusicXML` writes it all in. With `textReader: .appleModel`,
+   `ScoreTextImageCrops` and `AppleScoreTextReader` read it on Private Cloud Compute instead.
 4. **Checks.** `ScoreTimeSignatureMusicXML` gives an overfull bar a time signature of its own length with
    "check bar" above it, so MuseScore (and Aria) open the file.
 
@@ -143,7 +148,12 @@ evidence inputs must be int64. `Vendor/copisteria/` records what the port change
 - The Apple chord route sends crops for every bar even on pages with no chord symbols, which uses up the quota on
   long classical scores.
 - On-device chords: an alternate chord in a second row over the line is left out when it falls on the main chord's
-  beat (both would play). Rehearsal marks, D.S./Coda and Fine are not read on the device yet.
+  beat (both would play).
+- Navigation is written as words. MuseScore turns words into jumps and markers only with "infer text type" on in
+  its MusicXML import (off in Aria's engine and by default on the desktop), so the scan shows D.S. al Coda but does
+  not play the jump.
+- On-device text: handwritten headers (Real Book 6) read poorly; lyrics are kept out of staff text by position and
+  by look (hyphenated syllables, lowercase words), not perfectly.
 
 ## Third-party code
 

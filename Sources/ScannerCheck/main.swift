@@ -11,7 +11,7 @@ import ScannerCore
 //   --chord-read CROPS_DIR MODELS ROUTE       the on-device chord reader on export_crops.py crops, writing
 //                                            CROPS_DIR/results-ROUTE.json (parity with onnx_bench.py)
 //   --chord-read-pages PAGES COP MODELS OUT.json   finder, crops and reader on pages --copista dumped (COP/cop-NAME)
-//   --read-image IMAGE MODELS OUT.xml   one page read as the apps read it, chords on this device, no Apple model
+//   --read-image IMAGE MODELS OUT.xml   one page read as the apps read it, chords and text on this device
 //   --read-pdf PDF MODELS OUT.xml       the same for a whole PDF
 
 func writeChordCrops(image: Data, models: URL, output: URL) throws {
@@ -62,8 +62,10 @@ do {
     case "--chordfind":
         print(try ChordFinderInspect.run(image: input, copista: models, output: output))
     case "--read-image", "--read-pdf":
-        // chords on this device; title and staff text off, so nothing is sent to Apple's model
-        let options = ScoreReadOptions(readChordNames: true, readStaffText: false, chordReader: .onDevice)
+        // chords and text on this device: nothing is sent to Apple's model
+        let options = ScoreReadOptions(
+            readChordNames: true, readStaffText: true, chordReader: .onDevice, textReader: .onDevice)
+        precondition(!options.usesAppleModel)
         let data = try Data(contentsOf: input)
         let start = Date()
         let reading = arguments[1] == "--read-image"
@@ -75,6 +77,12 @@ do {
             + "\(counts?.unusual ?? 0), blocked \(counts?.blocked ?? 0)), chords \(String(format: "%.2f", reading.chords.seconds))s, "
             + "total \(String(format: "%.2f", Date().timeIntervalSince(start)))s")
         if let note = reading.chords.routeNote { print("NOTE: \(note)") }
+        if let m = reading.text.metadata {
+            print("HEADER: title=\"\(m.title)\" composer=\"\(m.composer)\" arranger=\"\(m.arranger)\" tempo=\"\(m.tempoText)\" bpm=\(m.bpm) unit=\(m.beatUnit)")
+        }
+        for t in reading.text.staffText {
+            print("TEXT: system \(t.system) bar \(t.bar + 1) [\(t.category)] \(t.text)")
+        }
     case "--chord-read":
         print(try LocalChordReaderInspect.readCrops(models: models, crops: input, route: arguments[4]))
     case "--chord-crops":

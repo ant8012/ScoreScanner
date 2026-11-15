@@ -13,6 +13,8 @@ public struct ChordLabel: Sendable {
   public var beatUnit: Int?
   public var timingSource: String?
   public var timingStatus: String?
+  /// The finder word it was read from ("x0,y0,x1,y1"), for the on-device text pass.
+  var word: String? = nil
 }
 
 public struct ChordBar: Sendable {

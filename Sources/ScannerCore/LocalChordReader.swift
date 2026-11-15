@@ -9,6 +9,9 @@ import OnnxRuntimeBindings
 /// (`export_crops.py`, then PaddleX's recogniser preprocessing), so the benchmark's readings carry over.
 public enum LocalChordReader {
   static let modelFile = "chord_rec.onnx"
+  /// The standard PP-OCRv6 small recogniser (not fine-tuned), for the page's other text (`LocalTextReader`).
+  static let textModelFile = "text_rec.onnx"
+  /// Both models use PP-OCRv6's character list.
   static let dictionaryFile = "chord_rec_dict.txt"
 
   /// Whether `models` holds the chord reading model.
@@ -49,9 +52,12 @@ public enum LocalChordReader {
     /// Index 0 is the CTC blank and the last entry a space (the model was trained with use_space_char).
     let characters: [String]
 
-    init(models: URL) throws {
-      guard LocalChordReader.available(models: models) else {
-        throw ScannerError.invalid("The chord reading model is missing")
+    /// `file`: the chord model (default) or `textModelFile`.
+    init(models: URL, file: String = LocalChordReader.modelFile) throws {
+      guard FileManager.default.fileExists(atPath: models.appendingPathComponent(file).path),
+        FileManager.default.fileExists(atPath: models.appendingPathComponent(dictionaryFile).path)
+      else {
+        throw ScannerError.invalid("The \(file == modelFile ? "chord" : "text") reading model is missing")
       }
       let data = try Data(contentsOf: models.appendingPathComponent(dictionaryFile))
       // One character per line. Split on the byte, not on Swift's grapheme clusters, so a combining mark on a line
@@ -63,7 +69,7 @@ public enum LocalChordReader {
       characters = [""] + lines + [" "]
       env = try ORTEnv(loggingLevel: .warning)
       session = try ORTSession(
-        env: env, modelPath: models.appendingPathComponent(modelFile).path,
+        env: env, modelPath: models.appendingPathComponent(file).path,
         sessionOptions: RuntimePolicy.options())
       input = try session.inputNames().first ?? "x"
       output = try session.outputNames().first ?? "fetch_name_0"
@@ -122,18 +128,37 @@ public enum LocalChordReader {
 
   /// Reads the chord symbols of one scanned page and writes them into its score, each at the measure and beat the
   /// finder placed it (the beat from the note under the chord, or the nearest strong beat).
+  /// One page read for chords, and what the text pass needs from it.
+  struct PageChords {
+    let scan: ScanResult
+    let analysis: AppleChordAnalysis
+    /// Finder words that became chords (or a chord's bass), as "x0,y0,x1,y1".
+    let chordWords: Set<String>
+    /// Single letters left out because they open a line on a chord's beat: unboxed rehearsal letters.
+    let lineStartLetters: [(word: String, letter: String)]
+  }
+
+  static func wordKey(_ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int) -> String { "\(x0),\(y0),\(x1),\(y1)" }
+
   static func read(
     _ scan: ScanResult, model: Model, page number: Int, progress: @Sendable (String) -> Void = { _ in }
   ) throws -> (scan: ScanResult, analysis: AppleChordAnalysis) {
+    let page = try readPage(scan, model: model, page: number, progress: progress)
+    return (page.scan, page.analysis)
+  }
+
+  static func readPage(
+    _ scan: ScanResult, model: Model, page number: Int, progress: @Sendable (String) -> Void = { _ in }
+  ) throws -> PageChords {
     let start = Date()
     progress("Reading chord symbols")
     let page = Image(width: scan.pageWidth, height: scan.pageHeight, pixels: [UInt8](scan.page))
     let geometries = try scan.staffs.map { try StaffGeometry.decode($0.geometry) }
     // the measures of each scanned staff, from its left edge, measure starts and right edge
     let bounds = geometries.map { g in [g.minx] + g.barlines.map(\.x) + [g.maxx] }
-    var labels: [Int: [Int: [(label: ChordLabel, upper: Bool)]]] = [:]
+    var labels: [Int: [Int: [Placed]]] = [:]
     var crops: [AppleChordCropAnalysis] = []
-    var skipped = (lower: 0, unplaced: 0, alternates: 0)
+    var skipped = (lower: 0, unplaced: 0, alternates: 0, basses: 0, strays: 0)
     for word in scan.chordWords where word.kind == .text {
       try Task.checkCancellation()
       // chords stand over the upper staff of a grand staff; text over the lower one is something else
@@ -175,10 +200,25 @@ public enum LocalChordReader {
         let label = ChordLabel(
           text: reading.text, chord: chord, confidence: Float(reading.score), x0: x0, x1: x0 + width,
           bar: measure, measureNumber: nil, partID: nil, beat: chords.count == 1 ? word.beat : nil,
-          beatUnit: nil, timingSource: chords.count == 1 && word.beat != nil ? "finder" : nil, timingStatus: nil)
-        labels[target.staff, default: [:]][measure, default: []].append((label, word.upperRow))
+          beatUnit: nil, timingSource: chords.count == 1 && word.beat != nil ? "finder" : nil, timingStatus: nil,
+          word: wordKey(word.x0, word.y0, word.x1, word.y1))
+        labels[target.staff, default: [:]][measure, default: []].append(Placed(
+          label: label, upper: word.upperRow, x0: word.x0, y0: word.y0, x1: word.x1, y1: word.y1,
+          overNote: word.beatSource == "note", sp: g.unit))
       }
     }
+    var letters: [Placed] = []
+    // a joined bass's own word is part of a chord too
+    var joinedBasses: [String] = []
+    let before = Set(labels.values.flatMap(\.values).flatMap { $0 }.compactMap(\.label.word))
+    for staff in labels.keys {
+      let (joined, dropped) = tidy(&labels[staff, default: [:]], letters: &letters)
+      skipped.basses += joined
+      skipped.strays += dropped
+    }
+    let after = Set(labels.values.flatMap(\.values).flatMap { $0 }.compactMap(\.label.word))
+    let letterWords = Set(letters.map { wordKey($0.x0, $0.y0, $0.x1, $0.y1) })
+    joinedBasses = before.subtracting(after).filter { !letterWords.contains($0) }.sorted()
     // A page that prints chord symbols prints many; one chord-like word on a page is something else (a piano
     // score's "E" read from a stray mark), so the page is taken to print none.
     let found = labels.values.flatMap(\.values).map(\.count).reduce(0, +)
@@ -192,7 +232,7 @@ public enum LocalChordReader {
         // a chord of a second row over the line (alternate changes) gives way to the main row's chord on its beat
         let kept = here.filter { item in
           !item.upper || !here.contains { !$0.upper && $0.label.beat != nil && $0.label.beat == item.label.beat }
-        }.map(\.label)
+        }.map(\.label).sorted { $0.x0 < $1.x0 }
         skipped.alternates += here.count - kept.count
         return ChordBar(
           index: m, left: edges[m], right: edges[m + 1], text: kept.map(\.chord).joined(separator: " "),
@@ -214,6 +254,8 @@ public enum LocalChordReader {
     if unmapped > 0 { notes.append("\(unmapped) chords could not be matched to a measure.") }
     if skipped.alternates > 0 { notes.append("\(skipped.alternates) alternate chords on the main chord's beat were left out.") }
     if skipped.unplaced > 0 { notes.append("\(skipped.unplaced) words over staves the score does not hold were not read.") }
+    if skipped.basses > 0 { notes.append("\(skipped.basses) bass notes written below their chord were joined to it.") }
+    if skipped.strays > 0 { notes.append("\(skipped.strays) single letters on another chord's beat were left out.") }
     let placed = ScanResult(
       xml: xml, rawXML: xml, staffs: scan.staffs, page: Data(), pageWidth: scan.pageWidth,
       pageHeight: scan.pageHeight, seconds: scan.seconds + seconds, repairedMeasures: 0)
@@ -221,7 +263,82 @@ public enum LocalChordReader {
       route: "On-device chord reader (PP-OCRv6 small, round 3)",
       routeNote: notes.isEmpty ? nil : notes.joined(separator: " "),
       crops: crops, seconds: seconds)
-    return (placed, analysis)
+    var chordWords = Set<String>()
+    for staff in staffs {
+      for label in staff.bars.flatMap(\.labels) { if let key = label.word { chordWords.insert(key) } }
+    }
+    for label in joinedBasses { chordWords.insert(label) }
+    return PageChords(
+      scan: placed, analysis: analysis, chordWords: chordWords,
+      lineStartLetters: letters.map { (wordKey($0.x0, $0.y0, $0.x1, $0.y1), $0.label.chord) })
+  }
+
+  /// A chord read on the page, with the word it came from.
+  struct Placed {
+    var label: ChordLabel
+    let upper: Bool
+    let x0: Int, y0: Int, x1: Int, y1: Int
+    /// The finder took its beat from a note under it (rather than snapping it between notes).
+    let overNote: Bool
+    let sp: Double
+    var bareRoot: Bool { label.chord.range(of: "^[A-G][b#]?$", options: .regularExpression) != nil }
+  }
+
+  /// Two readings the finder put on one beat of a measure, when one of them is a bare letter, are usually one chord
+  /// and a piece of something else:
+  /// - a bass written below and to the right of its chord ("D-7" then a lower "C" past the slash) joins the chord;
+  /// - a rehearsal letter whose box the finder missed (the first word of the line), a sliver inside another chord's
+  ///   box, or a letter off the chord's baseline (the C of "al Coda") is left out.
+  /// Returns how many were joined and how many left out. Two real chords on one beat are spread by `ChordTiming`.
+  static func tidy(_ measures: inout [Int: [Placed]]) -> (joined: Int, dropped: Int) {
+    var letters: [Placed] = []
+    return tidy(&measures, letters: &letters)
+  }
+
+  /// `letters` receives the left-out letters that open their line (likely rehearsal letters).
+  static func tidy(_ measures: inout [Int: [Placed]], letters: inout [Placed]) -> (joined: Int, dropped: Int) {
+    var joined = 0, dropped = 0
+    let all = measures.values.flatMap { $0 }
+    let lineStart = all.map(\.x0).min()
+    // basses, across the whole line: one may sit just past the bar line its chord stands before
+    var removed = Set<String>()
+    func key(_ p: Placed) -> String { "\(p.x0),\(p.y0),\(p.label.chord)" }
+    for b in all where b.bareRoot {
+      let bh = Double(b.y1 - b.y0)
+      guard bh > 0 else { continue }
+      let owner = all.filter { a in
+        guard !a.bareRoot, !a.label.chord.contains("/"), !removed.contains(key(a)) else { return false }
+        let aw = Double(a.x1 - a.x0), ah = Double(a.y1 - a.y0)
+        return Double(b.x0) >= Double(a.x0) + 0.5 * aw && Double(b.x0) <= Double(a.x1) + 1.5 * a.sp && b.x1 > a.x1
+          && Double(b.y1) > Double(a.y1) + 0.2 * ah && Double(b.y0) < Double(a.y1) + 0.5 * ah
+      }.min { $0.x1 > $1.x1 }
+      guard let a = owner else { continue }
+      for m in measures.keys {
+        for i in measures[m]!.indices where key(measures[m]![i]) == key(a) {
+          measures[m]![i].label.chord += "/" + b.label.chord
+        }
+      }
+      removed.insert(key(b))
+      joined += 1
+    }
+    for m in measures.keys {
+      measures[m]!.removeAll { removed.contains(key($0)) }
+      let here = measures[m]!
+      measures[m]!.removeAll { b in
+        guard b.bareRoot, !b.overNote, let beat = b.label.beat else { return false }
+        let stray = here.contains { a in
+          guard !a.bareRoot, a.label.beat == beat else { return false }
+          let ah = Double(a.y1 - a.y0)
+          return b.x0 == lineStart || (b.x0 >= a.x0 && b.x1 <= a.x1) || abs(Double(b.y1 - a.y1)) > 0.5 * ah
+        }
+        if stray {
+          dropped += 1
+          if b.x0 == lineStart { letters.append(b) }
+        }
+        return stray
+      }
+    }
+    return (joined, dropped)
   }
 
   // MARK: preparing a crop

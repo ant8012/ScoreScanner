@@ -85,9 +85,92 @@ struct LocalChordReaderTests {
     #expect(plain.labels.map(\.beat) == [1, 3])
   }
 
+  /// The degrees a harmony carries, as MuseScore matches them ("add7", "addb9", "alt#5").
+  private func degrees(_ chord: String) -> [String] {
+    guard let node = ChordMusicXML.harmony(chord, offset: 0) ?? ChordMusicXML.looseHarmony(chord, offset: 0) else {
+      return []
+    }
+    return node.all("degree").map { d in
+      let alter = d.first("degree-alter")?.text ?? "0"
+      let sign = alter == "-1" ? "b" : alter == "1" ? "#" : ""
+      let type = d.first("degree-type")?.text ?? ""
+      return (type == "alter" ? "alt" : type) + sign + (d.first("degree-value")?.text ?? "")
+    }
+  }
+
+  @Test func extendedSusChordsAreSpelledAsMuseScoreSpellsThem() {
+    // MuseScore's chords.xml: 9sus = suspended-fourth add7 add9, 13sus = add7 add13, 7susb9 = add7 addb9
+    #expect(degrees("Bb9sus4") == ["add7", "add9"])
+    #expect(degrees("Eb9sus") == ["add7", "add9"])
+    #expect(degrees("Bb13sus") == ["add7", "add13"])
+    #expect(degrees("F7sus4") == ["add7"])
+    #expect(degrees("C7sus4b9") == ["add7", "addb9"])
+    #expect(degrees("Gsus4") == [])
+    #expect(ChordMusicXML.harmony("Bb9sus4", offset: 0)?.first("kind")?.text == "suspended-fourth")
+    // other chords keep their alterations as altered degrees
+    #expect(degrees("A7b9") == ["altb9"])
+  }
+
+  private func placed(_ chord: String, _ box: (Int, Int, Int, Int), beat: Double, overNote: Bool = false)
+    -> LocalChordReader.Placed
+  {
+    LocalChordReader.Placed(
+      label: ChordLabel(
+        text: chord, chord: chord, confidence: 1, x0: Double(box.0), x1: Double(box.2), bar: 0,
+        measureNumber: nil, partID: nil, beat: beat, beatUnit: nil, timingSource: "finder", timingStatus: nil),
+      upper: false, x0: box.0, y0: box.1, x1: box.2, y1: box.3, overNote: overNote, sp: 11.6)
+  }
+
+  @Test func aBassBelowItsChordJoinsItAndStrayLettersOnItsBeatGo() {
+    // "D-7/C" written diagonally: the finder cut "D-" and a lower "C" past the slash
+    var measures = [0: [placed("D-", (920, 740, 962, 772), beat: 1), placed("C", (974, 761, 996, 795), beat: 1)]]
+    #expect(LocalChordReader.tidy(&measures) == (1, 0))
+    #expect(measures[0]!.map(\.label.chord) == ["D-/C"])
+    // a boxed rehearsal letter at the start of the line, and a sliver inside a chord, on the chord's beat
+    var line = [
+      0: [placed("B", (91, 765, 115, 816), beat: 1), placed("Cmi7", (126, 770, 203, 810), beat: 1, overNote: true)],
+      3: [placed("Dbmaj7b9#5", (642, 538, 738, 600), beat: 1), placed("G", (663, 579, 669, 598), beat: 1)],
+    ]
+    #expect(LocalChordReader.tidy(&line) == (0, 2))
+    #expect(line[0]!.map(\.label.chord) == ["Cmi7"])
+    #expect(line[3]!.map(\.label.chord) == ["Dbmaj7b9#5"])
+    // a real one-letter chord beside another on its beat stays, to be spread
+    var pair = [0: [placed("G7", (300, 700, 340, 730), beat: 3), placed("C", (420, 700, 440, 730), beat: 3)]]
+    #expect(LocalChordReader.tidy(&pair) == (0, 0))
+    #expect(pair[0]!.count == 2)
+  }
+
+  @Test func twoChordsOnOneBeatAreSpreadInTheirPrintedOrder() {
+    func label(_ x: Double, _ beat: Double) -> ChordLabel {
+      ChordLabel(
+        text: "C", chord: "C", confidence: 1, x0: x, x1: x + 20, bar: 0, measureNumber: "1", partID: "P1",
+        beat: beat, beatUnit: nil, timingSource: "finder", timingStatus: nil)
+    }
+    // B/D# and C#- over one half note, both snapped to beat 3; the second stands three quarters into the bar
+    var bar = ChordBar(
+      index: 0, left: 0, right: 400, text: "", labels: [label(10, 1), label(200, 3), label(290, 3)],
+      measureNumber: "1", partID: "P1")
+    ChordTiming.place(bar: &bar, signature: ChordMeter(beats: 4, beatType: 4))
+    #expect(bar.labels.map(\.beat) == [1, 3, 4])
+    // a chord past the last bar line still lands inside the bar
+    var end = ChordBar(
+      index: 0, left: 0, right: 400, text: "", labels: [label(200, 3), label(420, 3)], measureNumber: "1",
+      partID: "P1")
+    ChordTiming.place(bar: &end, signature: ChordMeter(beats: 4, beatType: 4))
+    #expect(end.labels.map(\.beat) == [3, 4])
+    // no whole beat left: half a beat after the chord before
+    var full = ChordBar(
+      index: 0, left: 0, right: 400, text: "", labels: [label(300, 4), label(320, 4)], measureNumber: "1",
+      partID: "P1")
+    ChordTiming.place(bar: &full, signature: ChordMeter(beats: 4, beatType: 4))
+    #expect(full.labels.map(\.beat) == [4, 4.5])
+  }
+
   @Test func onlyTheAppleRoutesUseApplesModel() {
     #expect(!ScoreReadOptions(readStaffText: false).usesAppleModel)
-    #expect(ScoreReadOptions(readStaffText: true).usesAppleModel)
+    // staff text is read on this device by default
+    #expect(!ScoreReadOptions(readStaffText: true).usesAppleModel)
+    #expect(ScoreReadOptions(readStaffText: true, textReader: .appleModel).usesAppleModel)
     #expect(ScoreReadOptions(readChordNames: true, readStaffText: false, chordReader: .appleModel).usesAppleModel)
     #expect(!ScoreReadOptions(readChordNames: false, readStaffText: false, chordReader: .appleModel).usesAppleModel)
     #expect(ScoreReadOptions().chordReader == .onDevice)

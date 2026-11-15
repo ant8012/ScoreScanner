@@ -7,9 +7,9 @@ Reads printed sheet music (a photo, a camera scan or a PDF) into MusicXML on iPh
 - **Chord names** are read on the device too: a chord finder cuts each word above the staves and a PP-OCRv6 small
   text recogniser fine-tuned on chord symbols reads it (ONNX, no network, any supported device). Apple's model can
   still read them instead (`chordReader: .appleModel`), for comparison.
-- **Title, composer, tempo, instrument names and staff text** are read from the page by Apple's Foundation Models
-  on Private Cloud Compute (iOS 27), only when `readStaffText` is on. The on-device Apple model is not used unless a
-  caller turns `allowOnDeviceFallback` on.
+- **Title, composer, tempo, rehearsal marks, navigation (D.S. al Coda, To Coda, Fine) and other staff text** are
+  read on the device too, with the standard PP-OCRv6 small recogniser, when `readStaffText` is on. Apple's
+  Foundation Models on Private Cloud Compute (iOS 27) can read them instead (`textReader: .appleModel`).
 
 The repository holds two things:
 
@@ -30,11 +30,11 @@ reading.chordCount                              // chord symbols placed in the s
 ```
 
 `ScoreReader.read(image:)` reads one page image. `ScoreReadOptions` turns chord and staff-text reading on or off,
-picks the chord reader (`chordReader`, `.onDevice` by default) and sets how many Private Cloud Compute requests run
-at once. With `readStaffText: false` and the on-device chord reader a reading never leaves the device
-(`ScoreReadOptions.usesAppleModel` is false): notes and chords, no title. `ScoreReader.cloudReadingAvailable` says
-whether Apple's model can be used here. The models ship inside the package (`Sources/ScannerCore/Resources/Models`,
-37 MB: copista-2m 16 MB, the chord reader 21 MB).
+picks the readers (`chordReader` and `textReader`, both `.onDevice` by default) and sets how many Private Cloud
+Compute requests run at once. With the defaults a reading never leaves the device (`ScoreReadOptions.usesAppleModel`
+is false). `ScoreReader.cloudReadingAvailable` says whether Apple's model can be used here. The models ship inside the
+package (`Sources/ScannerCore/Resources/Models`, 58 MB: copista-2m 16 MB, the chord reader 21 MB, the text reader
+21 MB).
 
 The package supports iOS 16 and macOS 14; notes and chords read on all of them. Staff text and the Apple chord
 route need iOS 27 and an SDK that has FoundationModels. Read one score at a time: request limits are shared by the

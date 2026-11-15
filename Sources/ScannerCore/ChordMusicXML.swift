@@ -44,9 +44,31 @@ enum ChordTiming {
       bar.labels[$0].x0 < bar.labels[$1].x0
     }
     guard !indices.isEmpty else { return }
-    // Beats the chord finder took from the notes under each chord (in quarter notes) are kept as they are.
+    // Beats the chord finder took from the notes under each chord (in quarter notes) are kept as they are, except
+    // that two chords never share a beat: the finder snaps a chord with no note of its own to the nearest strong
+    // beat (two such chords in one half bar both land on 3), and a bar the note reader merged with the next starts
+    // both bars' chords on beat 1. A later chord on an earlier chord's beat takes the whole beat nearest where it
+    // stands in the bar instead, after the chord before it (half a beat after it when no whole beat is left).
     if indices.allSatisfy({ bar.labels[$0].timingSource == "finder" && bar.labels[$0].beat != nil }) {
-      for index in indices { bar.labels[index].beatUnit = 4 }
+      let meter = signature ?? fallback
+      let length = meter.map { Double($0.beats) * 4 / Double($0.beatType) } ?? 4
+      let span = max(0.000_001, bar.right - bar.left)
+      var previous: Double?
+      for index in indices {
+        bar.labels[index].beatUnit = 4
+        if let p = previous, let beat = bar.labels[index].beat, beat <= p {
+          let centre = (bar.labels[index].x0 + bar.labels[index].x1) / 2
+          let fraction = min(max((centre - bar.left) / span, 0), 0.999)
+          // a chord past the line's last bar line still belongs to its last beat
+          var spread = min((1 + fraction * length).rounded(), length)
+          if spread <= p { spread = p + 1 <= length ? (p + 1).rounded(.down) : p + 0.5 }
+          if spread < length + 1 {
+            bar.labels[index].beat = spread
+            bar.labels[index].timingStatus = "spread"
+          }
+        }
+        previous = bar.labels[index].beat
+      }
       return
     }
     let signature = signature ?? fallback
@@ -361,6 +383,23 @@ enum ChordMusicXML {
       }
       node.children.append(bass)
     }
+    func degree(_ value: String, _ alter: Int, _ type: String) -> XMLNode {
+      XMLNode("degree", children: [
+        XMLNode("degree-value", text: value), XMLNode("degree-alter", text: "\(alter)"),
+        XMLNode("degree-type", text: type),
+      ])
+    }
+    // A sus chord with a seventh or more is spelled as MuseScore's chord list spells it (chords.xml): the fourth
+    // suspended, then add7, then the extension (9sus: add7 add9; 13sus: add7 add13), then its alterations as added
+    // degrees. MuseScore matches kind and degrees in that order and names the chord from the match, ignoring the
+    // printed text, so writing only the extension turned Bb9sus4 into Bbsus4add9 and Bb13sus into Bbsus4.
+    let susSeventh = quality == "sus" && ["7", "9", "11", "13"].contains(extensionValue)
+    if susSeventh {
+      node.children.append(degree("7", 0, "add"))
+      if extensionValue == "9" || extensionValue == "11" { node.children.append(degree("9", 0, "add")) }
+      if extensionValue == "11" { node.children.append(degree("11", 0, "add")) }
+      if extensionValue == "13" { node.children.append(degree("13", 0, "add")) }
+    }
     for match in degreePattern.matches(
       in: alterations, range: NSRange(alterations.startIndex..., in: alterations))
     {
@@ -370,7 +409,8 @@ enum ChordMusicXML {
       let word = text(1), sign = text(2), value = text(3)
       guard !value.isEmpty else { continue }
       let alter = sign == "#" || sign == "+" ? 1 : sign == "b" ? -1 : 0
-      let type = word == "no" || word == "omit" ? "subtract" : alter == 0 ? "add" : "alter"
+      let type = word == "no" || word == "omit" ? "subtract"
+        : alter == 0 || (susSeventh && value != "5") ? "add" : "alter"
       node.children.append(XMLNode("degree", children: [
         XMLNode("degree-value", text: value), XMLNode("degree-alter", text: "\(alter)"),
         XMLNode("degree-type", text: type),
@@ -379,12 +419,6 @@ enum ChordMusicXML {
     if extensionValue == "6/9" || extensionValue == "69" {
       node.children.append(XMLNode("degree", children: [
         XMLNode("degree-value", text: "9"), XMLNode("degree-alter", text: "0"),
-        XMLNode("degree-type", text: "add"),
-      ]))
-    }
-    if quality == "sus", ["7", "9"].contains(extensionValue) {
-      node.children.append(XMLNode("degree", children: [
-        XMLNode("degree-value", text: extensionValue), XMLNode("degree-alter", text: "0"),
         XMLNode("degree-type", text: "add"),
       ]))
     }
@@ -467,7 +501,11 @@ enum ChordMusicXML {
       kind = sized("major-seventh", [9: "major-ninth", 11: "major-11th", 13: "major-13th"])
     } else if suffix.contains("sus") {
       kind = suffix.contains("sus2") ? "suspended-second" : "suspended-fourth"
+      // as in `harmony`: add7, then the extension, as MuseScore's chord list spells a sus chord
       if [7, 9, 11, 13].contains(size) { degrees.append((7, 0, "add")) }
+      if size == 9 || size == 11 { degrees.append((9, 0, "add")) }
+      if size == 11 { degrees.append((11, 0, "add")) }
+      if size == 13 { degrees.append((13, 0, "add")) }
     } else {
       kind = sized(
         "major",
@@ -475,6 +513,7 @@ enum ChordMusicXML {
          11: "dominant-11th", 13: "dominant-13th"])
       if numbers.first == 2 { degrees.append((2, 0, "add")) }
     }
+    let susSeventh = kind == "suspended-fourth" && [7, 9, 11, 13].contains(size)
     for match in marks.matches(in: suffix, range: whole) {
       // An opening + is the augmented quality, not a raised degree.
       if match.range.location == 0 && suffix.hasPrefix("+") { continue }
@@ -484,8 +523,8 @@ enum ChordMusicXML {
       switch suffix[markRange] {
       case "add": degrees.append((value, 0, "add"))
       case "no", "omit": degrees.append((value, 0, "subtract"))
-      case "b": degrees.append((value, -1, "alter"))
-      default: degrees.append((value, 1, "alter"))
+      case "b": degrees.append((value, -1, susSeventh && value != 5 ? "add" : "alter"))
+      default: degrees.append((value, 1, susSeventh && value != 5 ? "add" : "alter"))
       }
     }
     return (kind, degrees)

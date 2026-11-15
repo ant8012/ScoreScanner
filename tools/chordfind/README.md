@@ -299,3 +299,39 @@ The score loses 7 chords on purpose: alternates in a second row over the line th
 chord-like word is taken to print none (a piano photo read one "E"). Aria's engine imports the MusicXML with every
 chord (21/21, 32/32, 47/47 on three pages), saved as format 4.70. `score_reads.py xml` now reads every part in page
 order and spells a chord from kind@text when present (ScannerCore also writes alterations as degrees).
+
+### Extended sus chords and chords sharing a beat (November 2026)
+
+- MuseScore names an imported chord from its MusicXML kind and degrees (matched in order against its chord list),
+  not from kind@text. ScannerCore wrote 9sus/13sus as suspended-fourth with only the extension, so Aria showed
+  Bb9sus4 as Bbsus4add9 and Bb13sus as Bbsus4. Sus chords with a seventh now carry add7, then the extension, then
+  their alterations as added degrees, as MuseScore's chords.xml spells them.
+- Two chords never share a beat: a bass written below and right of its chord joins it ("D-7" + "C" -> D-/C); a bare
+  letter on another chord's beat that is the line's first word (an unboxed rehearsal letter), sits inside the chord's
+  box, or is off its baseline is left out; other chords on one beat are spread in printed order to the nearest whole
+  beat (rb3-p42: B7#11 Bb7 A7 Ab7 in order, beast: C#- on 4).
+- `score_reads.py` treats sus and sus4 as the same chord.
+
+20 test pages (768 chords), on the Mac (ScannerCheck --read-image) and in Aria on the iPhone simulator (saved .mscz):
+
+| | Exact | Root | False | Same-beat collisions |
+| --- | --- | --- | --- | --- |
+| ScannerCore MusicXML, before | 662 | 707 | 23 | 17 |
+| ScannerCore MusicXML, after | 666 | 710 | 14 | 0 |
+| Aria saved score, before | 644 | 707 | 23 | 17 |
+| Aria saved score, after | 668 | 710 | 14 | 0 |
+
+### On-device score text (November 2026)
+
+`LocalTextReader` reads the page's other text with the standard PP-OCRv6 small recogniser (`text_rec.onnx`, exported
+by `export_onnx.py` from the released weights; identical readings to PaddleOCR's own model on 198 benchmark crops).
+`text_fixtures.py` renders six focused one-page lead sheets; all six read correctly (title, composer, rehearsal A
+and B, To Coda / D.S. al Coda / Coda / Fine / D.C. al Fine / D.S. al Fine in their measures, and the tempo:
+6/8 "= 92" -> dotted quarter, 2/2 "Bright = 120" -> half with "Bright", 4/4 "Medium Swing = 100" -> quarter,
+printed dotted quarter = 60, half = 80, and quarter = 120 in 6/8 kept as printed).
+
+On the 20 test pages (no answer key; judged by eye): title right on 13 of the 18 pages that print one (Real Book 6
+handwriting is the weak spot: "TUMP MONK", "2) SOMETIME"), no title invented on the 2 continuation pages,
+composer right or nearly on 14, tempo/style wording on 8 (one cut short: "Med. S"; "Med. Up Swing", "Medium Waltz", "Ballad", "SLOWLY"), a
+metronome mark on 2, 31 staff text items (rehearsal letters, "Fine", "D.S.", "Till cue", "(play lower notes on repeat
+only)", a few misreads). Chord results unchanged (666 exact / 710 root / 14 false, 0 collisions).
