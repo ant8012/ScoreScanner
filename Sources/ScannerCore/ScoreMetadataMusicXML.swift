@@ -440,7 +440,8 @@ public enum ScoreMetadataMusicXML {
   /// `segno`/`coda` on the signs, `dalsegno`/`dacapo` on D.S./D.C. (their words, "D.S. al Coda", still say how far),
   /// `tocoda` on To Coda and `fine` on Fine. A jump is written only when its target is unambiguous: one segno at or
   /// before a D.S., and for "al Coda" one To Coda after the jump target and one coda after the jump; for "al Fine"
-  /// one Fine. A sign in the same bar as its own D.S. or To Coda words is part of them, not a second target.
+  /// one Fine; a plain D.S. or D.C. only in a score with no coda and no Fine (where it plays to the end). A sign in
+  /// the same bar as its own D.S. or To Coda words is part of them, not a second target.
   /// Anything missing or doubled stays words only: a player can read it, and a wrong jump would play wrong music.
   static func insertPlaybackJumps(into root: XMLNode) {
     enum Kind { case segno, coda, toCoda, fine, dalSegno(String), daCapo(String) }
@@ -521,7 +522,11 @@ public enum ScoreMetadataMusicXML {
           guard let fine, fine.measure >= start else { return false }
           usesFine = true
           return true
-        default: return true
+        default:
+          // a plain D.S. or D.C. in a score that prints a coda or a Fine was probably "al Coda" or "al Fine" in a
+          // form not read ("D.S. al ⊕", the coda drawn as its sign): playing it to the end would be wrong
+          return codas.isEmpty && toCodas.isEmpty && fines.isEmpty
+            && !marks.contains { if case .coda = $0.kind { return true }; return false }
         }
       }
       for mark in words {

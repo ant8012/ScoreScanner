@@ -53,6 +53,11 @@ struct PlaybackJumpTests {
     #expect(sounds(try score([2: ["segno"], 6: ["D.S. al Coda"], 7: ["coda"]])).isEmpty)
     // D.C. al Fine with no Fine
     #expect(sounds(try score([8: ["D.C. al Fine"]])).isEmpty)
+    // "D.S. al ⊕" read as a plain D.S.: the coda sign says it was not meant to play to the end
+    #expect(sounds(try score([2: ["segno"], 6: ["D.S.", "coda"]])).isEmpty)
+    #expect(sounds(try score([4: ["Fine"], 8: ["D.C."]])).isEmpty)
+    // with no coda and no Fine anywhere, a plain D.S. plays to the end
+    #expect(sounds(try score([2: ["segno"], 6: ["D.S."]])) == ["2: segno=segno", "6: dalsegno=segno"])
   }
 
   @Test func aSignBesideItsOwnWordsIsNotASecondTarget() throws {
