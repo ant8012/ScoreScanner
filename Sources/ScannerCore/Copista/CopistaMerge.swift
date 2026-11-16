@@ -32,11 +32,13 @@ enum CopistaMerge {
       endedFlagged = pageParts.first?.all("measure").last?.all("attributes").contains {
         ($0.first("time")?.attributes["id"] ?? "").hasPrefix(Copista.Tidy.overflowID)
       } ?? false
-      // a page turn starts a new system (and page), so each page's systems stay as printed
+      // a page turn starts a new system, so each page's systems stay as printed. Not a new page: the score's page
+      // size and staff size are MuseScore's, not the print's, so a printed page rarely fills one page of the score,
+      // and a forced page break left a page holding only the systems that spilled over.
       func turn(_ m: XMLNode) {
         guard pageIndex > 0 else { return }
         m.children.removeAll { $0.tag == "print" }
-        m.children.insert(XMLNode("print", attributes: ["new-system": "yes", "new-page": "yes"]), at: 0)
+        m.children.insert(XMLNode("print", attributes: ["new-system": "yes"]), at: 0)
       }
       let ref = pageParts.first?.all("measure") ?? []
       let divisions = ref.first?.first("attributes")?.first("divisions")?.text ?? "1"
