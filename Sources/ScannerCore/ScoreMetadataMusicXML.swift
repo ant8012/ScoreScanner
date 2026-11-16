@@ -61,18 +61,20 @@ public enum ScoreMetadataMusicXML {
   /// page-one credits, writes header tempo as a first-measure metronome mark, and
   /// writes staff text as measure-attached directions. Locations are accepted
   /// only when the native system's bar count matches MusicXML.
-  /// `partNames`: the instrument names printed beside the first system, in order; used only when there is one
-  /// for every part, in place of the reader's unprinted "Part n" placeholders.
+  /// `partNames`: the instrument names printed beside the first system, one per part in order ("" where none was
+  /// read); used only when the count matches the parts, in place of the reader's unprinted "Part n" placeholders.
+  /// `partAbbreviations`: the short names beside later systems, the same way.
   public static func insertingRecognizedContent(
     title: String?, composer: String?, arranger: String?, tempo: ScoreHeaderTempo? = nil,
-    partNames: [String] = [], staffText: [ScoreTextDirection], into result: DocumentScanResult
+    partNames: [String] = [], partAbbreviations: [String] = [], staffText: [ScoreTextDirection],
+    into result: DocumentScanResult
   ) throws -> DocumentScanResult {
     let mapped = try mappedDirections(
       staffText.filter { !repeatsHeaderTempo($0, tempo) }, score: result.xml)
     func write(_ data: Data) throws -> Data {
       try inserting(
         title: title, composer: composer, arranger: arranger, tempo: tempo, partNames: partNames,
-        directions: mapped, into: data)
+        partAbbreviations: partAbbreviations, directions: mapped, into: data)
     }
     return DocumentScanResult(
       xml: try write(result.xml), rawXML: try write(result.rawXML),
@@ -118,6 +120,7 @@ public enum ScoreMetadataMusicXML {
 
   private static func inserting(
     title: String?, composer: String?, arranger: String?, tempo: ScoreHeaderTempo?, partNames: [String] = [],
+    partAbbreviations: [String] = [],
     directions: [MappedDirection], into data: Data
   ) throws -> Data {
     let root = try XMLNode.parse(data)
@@ -129,21 +132,24 @@ public enum ScoreMetadataMusicXML {
     if let composer { insertCreator(composer, type: "composer", into: root) }
     if let arranger { insertCreator(arranger, type: "arranger", into: root) }
     if title != nil || composer != nil || arranger != nil { insertCredits(into: root) }
-    insertPartNames(partNames, into: root)
+    insertPartNames(partNames, abbreviations: partAbbreviations, into: root)
     insertTempo(tempo, into: root)
     insertDirections(directions, into: root)
     insertPlaybackJumps(into: root)
     return Data(("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + root.serialized()).utf8)
   }
 
-  private static func insertPartNames(_ names: [String], into root: XMLNode) {
-    let names = names.compactMap { cleaned($0) }
+  private static func insertPartNames(_ names: [String], abbreviations: [String], into root: XMLNode) {
     let parts = root.first("part-list")?.all("score-part") ?? []
-    guard !names.isEmpty, names.count == parts.count else { return }
-    for (part, name) in zip(parts, names) {
-      guard let partName = part.first("part-name") else { continue }
+    guard names.count == parts.count else { return }
+    for (k, part) in parts.enumerated() {
+      guard let name = cleaned(names[k]), let partName = part.first("part-name") else { continue }
       partName.text = name
       partName.attributes["print-object"] = nil
+      guard abbreviations.count == parts.count, let short = cleaned(abbreviations[k]), part.first("part-abbreviation") == nil,
+        let at = part.children.firstIndex(where: { $0 === partName })
+      else { continue }
+      part.children.insert(XMLNode("part-abbreviation", text: short), at: at + 1)
     }
   }
 

@@ -21,3 +21,18 @@ Faisst p3/p5 and Cowen *Past and Future* p4 change, all for the better.
 
 The corpus is downloaded, never committed. The rendered pages are clean: they don't show photo problems such
 as page curl or a binding shadow, so check those on real photos as well.
+
+# Part names
+
+`gen_parts.py` has MuseScore 4 print ensembles with known part names (string quartets, piano trio, voice and
+piano, choir, wind and brass quintets, duos, lone instruments), most with a bracket, plus a rough photo-like
+copy of each page. `score_parts.py` scores the names `ScannerCheck --read-image` writes.
+
+```sh
+python3.12 tools/eval/gen_parts.py tools/chordfind/data/partnames2 40 11
+# scan each NAME-1.png (and rough/NAME-1.png) with ScannerCheck --read-image into scan/ (scan-rough/)
+python3.12 tools/eval/score_parts.py tools/chordfind/data/partnames2/truth.json tools/chordfind/data/partnames2/scan
+```
+
+Nov 15 2026: 100 pages (60 clean, 40 bracketed in clean and rough copies), every long and short name right
+(600). No names written on 59 lead-sheet and Real Book pages; the chord benchmark unchanged (666 / 710 / 14).

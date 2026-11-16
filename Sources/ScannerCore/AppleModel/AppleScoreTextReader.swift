@@ -45,6 +45,11 @@ public struct AppleScoreTextAnalysis: Codable, Sendable {
   public let initialTimeSignature: ScoreTimeSignature?
   public let staffText: [AppleStaffTextReading]
   public let seconds: Double
+  /// The instrument names printed left of each part's staves on the first system, one per part in score order
+  /// ("" where none was read); nil when the reader does not look for them. Read on this device only.
+  public var partNames: [String]? = nil
+  /// The short names printed beside the second system ("Vln. I"), the same way.
+  public var partAbbreviations: [String]? = nil
 }
 
 enum AppleScoreTextReader {

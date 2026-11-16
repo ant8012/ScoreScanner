@@ -194,9 +194,80 @@ enum LocalTextReader {
         title: m.title, subtitle: m.subtitle, composer: m.composer, arranger: m.arranger, partName: m.partName,
         tempoText: m.tempoText, beatUnit: unit, bpm: m.bpm, copyright: m.copyright)
     }
+    var names: (long: [String], short: [String])?
+    if header {
+      progress("Reading part names")
+      names = try partNames(page: page, staffs: geometries, model: model)
+    }
     return AppleScoreTextAnalysis(
       route: route, routeNote: nil, metadata: metadata?.isEmpty == true ? nil : metadata,
-      initialTimeSignature: nil, staffText: readings, seconds: Date().timeIntervalSince(start))
+      initialTimeSignature: nil, staffText: readings, seconds: Date().timeIntervalSince(start),
+      partNames: names?.long, partAbbreviations: names?.short)
+  }
+
+  // MARK: part names
+
+  /// A name as read, with the key of a transposing instrument spelled as printed: "Clarinet in Bb" reads the
+  /// flat sign as a "b". Only after "in": "Cb." is a contrabass.
+  static func instrumentName(_ text: String) -> String {
+    text.replacingOccurrences(of: #"\b(in|In) ([A-G])b\b"#, with: "$1 $2♭", options: .regularExpression)
+      .replacingOccurrences(of: #"\b(in|In) ([A-G])#"#, with: "$1 $2♯", options: .regularExpression)
+  }
+
+  /// The tallest letter of a part name, in staff spaces: taller pieces in the margin are brackets and braces.
+  static let nameLetterMax = 2.5
+  /// Readings below this are smudges, bracket ends or stray marks.
+  static let nameScoreMin = 0.6
+
+  /// Instrument names printed in the margin left of each part's staves: long names beside the first system,
+  /// short ones beside the second. One entry per part ("" where none was read); a name printed on two lines
+  /// ("Clarinet in" / "B♭") is read as one.
+  static func partNames(page: LocalChordReader.Image, staffs: [StaffGeometry], model: LocalChordReader.Model)
+    throws -> (long: [String], short: [String])
+  {
+    let parts = (staffs.compactMap(\.voice).max() ?? -1) + 1
+    let systems = Array(Set(staffs.compactMap(\.system))).sorted()
+    guard parts > 0, !systems.isEmpty else { return ([], []) }
+    func names(on system: Int) throws -> [String] {
+      var out = [String](repeating: "", count: parts)
+      let staves = staffs.filter { $0.system == system && $0.voice != nil }
+      // each part's band of the page: its staves, a little above and below, split halfway to its neighbours
+      var bands: [(part: Int, top: Double, bottom: Double, left: Double, sp: Double)] = []
+      for p in Set(staves.map { $0.voice! }) {
+        let own = staves.filter { $0.voice == p }
+        bands.append((p, own.map(\.miny).min()!, own.map(\.maxy).max()!, own.map(\.minx).min()!,
+                      median(own.map(\.unit))))
+      }
+      bands.sort { $0.top < $1.top }
+      for (k, b) in bands.enumerated() {
+        let above = k > 0 ? (bands[k - 1].bottom + b.top) / 2 : b.top - 3 * b.sp
+        let below = k + 1 < bands.count ? (b.bottom + bands[k + 1].top) / 2 : b.bottom + 3 * b.sp
+        let rows = Int(max(above, b.top - 1.5 * b.sp))..<Int(min(below, b.bottom + 1.5 * b.sp))
+        let cols = 0..<max(0, Int(b.left - 0.3 * b.sp))
+        var lines: [String] = []
+        for box in phrases(page: page, rows: rows, cols: cols, sp: b.sp, tallest: nameLetterMax) {
+          let read = try readPhrase(Phrase(box: box), page: page, model: model)
+          let text = read.text.trimmingCharacters(in: .whitespaces)
+          if ProcessInfo.processInfo.environment["SCANNER_TEXT_DEBUG"] != nil {
+            print("PART NAME system \(system) part \(b.part) \(box) \(String(format: "%.2f", read.score)) \"\(text)\"")
+          }
+          guard read.score >= nameScoreMin, text.contains(where: \.isLetter) else { continue }
+          lines.append(text)
+        }
+        out[b.part] = instrumentName(lines.joined(separator: " "))
+      }
+      return out
+    }
+    let long = try names(on: systems[0])
+    // short names: the next systems, each part from the first that has one (a system the layout split in two
+    // still gives every part its name)
+    var short: [String] = []
+    for system in systems.dropFirst().prefix(3) {
+      let found = try names(on: system)
+      short = short.isEmpty ? found : zip(short, found).map { $0.isEmpty ? $1 : $0 }
+      if !short.contains(where: \.isEmpty) { break }
+    }
+    return (long, short)
   }
 
   static let route = "On-device text reader (PP-OCRv6 small)"
@@ -226,7 +297,9 @@ enum LocalTextReader {
 
   /// Lines of text in a region of the page (the header, the space under the last staff), split into phrases at
   /// gaps wider than a letter and a bit: a title and a composer printed on one line come apart.
-  static func phrases(page: LocalChordReader.Image, rows: Range<Int>, cols: Range<Int>, sp: Double) -> [Box] {
+  static func phrases(
+    page: LocalChordReader.Image, rows: Range<Int>, cols: Range<Int>, sp: Double, tallest: Double = 8
+  ) -> [Box] {
     let rows = max(0, rows.lowerBound)..<min(page.height, rows.upperBound)
     guard rows.count > 2, cols.count > 2 else { return [] }
     let w = cols.count, h = rows.count
@@ -247,7 +320,7 @@ enum LocalTextReader {
     }
     let comps = ChordFinder.label8(mask, width: w, height: h).map(\.0).filter { c in
       let ch = Double(c.h), cw = Double(c.w)
-      return Double(c.area) >= 0.05 * sp * sp && ch <= 8 * sp && cw <= 0.6 * Double(page.width)
+      return Double(c.area) >= 0.05 * sp * sp && ch <= tallest * sp && cw <= 0.6 * Double(page.width)
         && !(ch <= 0.35 * sp && cw >= 3 * sp)   // a rule or a staff line, not a letter
     }
     // lines: a piece joins the line whose typical letter (its pieces' median top and bottom) it overlaps by half;

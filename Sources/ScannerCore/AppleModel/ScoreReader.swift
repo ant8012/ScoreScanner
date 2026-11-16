@@ -122,7 +122,8 @@ public enum ScoreReader {
     let metadata = page.text.metadata
     let score = try ScoreMetadataMusicXML.insertingRecognizedContent(
       title: metadata?.title, composer: metadata?.composer, arranger: metadata?.arranger,
-      tempo: metadata?.headerTempo, partNames: partNames(metadata?.partName),
+      tempo: metadata?.headerTempo, partNames: page.text.partNames ?? partNames(metadata?.partName),
+      partAbbreviations: page.text.partAbbreviations ?? [],
       staffText: scoreTextDirections(from: page.text), into: DocumentScanResult(page.scan))
     return finished(score: score, metadata: metadata, chords: page.chords, text: page.text, crops: page.cropImages)
   }
@@ -193,7 +194,8 @@ public enum ScoreReader {
     let metadata = textAnalyses.compactMap(\.metadata).first
     let score = try ScoreMetadataMusicXML.insertingRecognizedContent(
       title: metadata?.title, composer: metadata?.composer, arranger: metadata?.arranger,
-      tempo: metadata?.headerTempo, partNames: partNames(metadata?.partName),
+      tempo: metadata?.headerTempo, partNames: textAnalyses.first?.partNames ?? partNames(metadata?.partName),
+      partAbbreviations: textAnalyses.first?.partAbbreviations ?? [],
       staffText: textDirections, into: combined)
     let chordNotes = chordAnalyses.compactMap(\.routeNote)
     let chords = AppleChordAnalysis(
