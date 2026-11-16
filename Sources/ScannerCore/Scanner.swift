@@ -22,6 +22,8 @@ public struct ScanResult: Sendable {
   public var chordWords: [ChordFinder.Proposal] = []
   /// For each layout staff the finder's words refer to, where its words go in the score.
   var chordWordStaffs: [Int: LocalChordReader.WordStaff] = [:]
+  /// The words under each staff that may be lyrics (`LyricFinder`), each with the note it is sung on.
+  public var lyricWords: [LyricFinder.Word] = []
 }
 
 /// Reads a page with copisteria (copista-2m): its detector and evidence models as ONNX, and its front end,
@@ -82,7 +84,7 @@ public enum Scanner {
     return ScanResult(
       xml: xml, rawXML: xml, staffs: staffs, page: Data(page.pixels), pageWidth: page.width,
       pageHeight: page.height, seconds: Date().timeIntervalSince(start), repairedMeasures: 0,
-      chordWords: chordWords, chordWordStaffs: wordStaffs)
+      chordWords: chordWords, chordWordStaffs: wordStaffs, lyricWords: LyricFinder.find(page, read.reading))
   }
 
   /// The meter a page's score ends in, for `scan(carriedMeter:)` on the next page.

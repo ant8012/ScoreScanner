@@ -50,6 +50,21 @@ public struct AppleScoreTextAnalysis: Codable, Sendable {
   public var partNames: [String]? = nil
   /// The short names printed beside the second system ("Vln. I"), the same way.
   public var partAbbreviations: [String]? = nil
+  /// The lyrics read under the staves, each on its note; nil when the reader does not look for them.
+  public var lyrics: [ScoreLyric]? = nil
+}
+
+/// One syllable of a lyric and the note it is sung on.
+public struct ScoreLyric: Codable, Sendable, Equatable {
+  /// The id the scanner gave the note (`id` on its MusicXML `<note>`).
+  public let noteID: String
+  /// 1 for the first verse.
+  public let verse: Int
+  public let text: String
+  /// MusicXML's single, begin, middle or end.
+  public let syllabic: String
+  /// Held over the following notes (an extender line).
+  public let extend: Bool
 }
 
 enum AppleScoreTextReader {

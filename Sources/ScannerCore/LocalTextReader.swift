@@ -194,6 +194,11 @@ enum LocalTextReader {
         title: m.title, subtitle: m.subtitle, composer: m.composer, arranger: m.arranger, partName: m.partName,
         tempoText: m.tempoText, beatUnit: unit, bpm: m.bpm, copyright: m.copyright)
     }
+    progress("Reading lyrics")
+    // the chords the chord reader accepted: a lyric word on one of them is the chord band of the line below
+    let acceptedChords = words.filter { chordWords.contains(LocalChordReader.wordKey($0.x0, $0.y0, $0.x1, $0.y1)) }
+      .map { Box(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) }
+    let lyrics = try readLyrics(scan.lyricWords, page: page, model: model, chords: acceptedChords)
     var names: (long: [String], short: [String])?
     if header {
       progress("Reading part names")
@@ -202,7 +207,124 @@ enum LocalTextReader {
     return AppleScoreTextAnalysis(
       route: route, routeNote: nil, metadata: metadata?.isEmpty == true ? nil : metadata,
       initialTimeSignature: nil, staffText: readings, seconds: Date().timeIntervalSince(start),
-      partNames: names?.long, partAbbreviations: names?.short)
+      partNames: names?.long, partAbbreviations: names?.short, lyrics: lyrics)
+  }
+
+  // MARK: lyrics
+
+  /// Words that are not sung: performance notes and instrument cues ("SOLOS", "(bass)", "Piano"), and chord
+  /// names ("D-7", "Bb", "F#sus"; "A" and "I" stay, being words too).
+  static let notSung: Set<String> = [
+    "solo", "solos", "head", "repeat", "ending", "fine", "coda", "tacet", "vamp", "intro", "outro",
+    "guitar", "gtr", "piano", "drums", "synth", "organ", "sax", "trumpet", "horns",
+    "tutti", "simile", "sim", "rit", "accel", "cresc", "dim", "segno",
+  ]
+
+  /// `syllable`: the word is joined by a hyphen to the one before or after it, so a single letter ("e-nough",
+  /// "bod-y") is a syllable.
+  static func lyricWord(_ text: String, syllable: Bool = false) -> Bool {
+    if text.hasPrefix("(") || text.hasSuffix(")") || text.hasPrefix("[") { return false }
+    let bare = text.trimmingCharacters(in: .punctuationCharacters).lowercased()
+    if notSung.contains(bare) || navigation(text) != nil { return false }
+    let letters = text.filter(\.isLetter)
+    // a single letter on its own is a word only as a, I or O
+    if letters.count == 1 && !syllable && !["a", "i", "o"].contains(letters.lowercased()) { return false }
+    // a chord name, unless it is also a word
+    if letters.count >= 1, !["a", "i", "am", "be", "do", "go", "ad"].contains(bare),
+      ChordText.normalizedSymbol(text.trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!?"))) != nil {
+      return false
+    }
+    return true
+  }
+
+  /// A lyric word as read, tidied: hyphens and extender ink at its ends dropped, a lone "0" read as the letter o,
+  /// and a word of letters that look alike in both cases ("so", "us", "we") read in capitals made lower case when
+  /// it stands no taller than the line's small letters.
+  static func lyricText(_ read: String, height: Int, tallest: Int) -> String {
+    var text = read.trimmingCharacters(in: CharacterSet(charactersIn: "-_–—‐ "))
+    if text.trimmingCharacters(in: .punctuationCharacters) == "0" { text = text.replacingOccurrences(of: "0", with: "o") }
+    let alike = Set("COSUVWXZ")
+    let letters = text.filter(\.isLetter)
+    if !letters.isEmpty, letters.allSatisfy({ alike.contains($0) }), Double(height) <= 0.8 * Double(tallest) {
+      text = text.lowercased()
+    }
+    return text
+  }
+
+  /// Readings below this are not lyrics: a stray mark, the tail of a note the detector missed.
+  static let lyricScoreMin = 0.5
+  /// The fewest words a line under a staff must read as to be lyrics.
+  static let lyricLineWords = 3
+
+  /// The lyric words `LyricFinder` found, read: each becomes a syllable on its note, single, begin, middle or end by
+  /// the hyphens around it (a hyphen ending a line carries over to the next line of the same verse). A word that
+  /// reads as no word, or as navigation, is dropped.
+  static func readLyrics(
+    _ words: [LyricFinder.Word], page: LocalChordReader.Image, model: LocalChordReader.Model, chords: [Box] = []
+  ) throws -> [ScoreLyric] {
+    // line by line, top to bottom, each line left to right
+    let lines = Dictionary(grouping: words) { "\($0.staff) \($0.verse)" }.values
+      .map { $0.sorted { $0.x0 < $1.x0 } }
+      .sorted { ($0[0].y0, $0[0].x0) < ($1[0].y0, $1[0].x0) }
+    // read every word; a word that reads as no word is nil
+    var readLines: [(staff: Int, words: [(word: LyricFinder.Word, text: String?)])] = []
+    for line in lines {
+      let tallest = line.map { $0.y1 - $0.y0 }.max() ?? 0
+      var read: [(LyricFinder.Word, String?)] = []
+      for w in line {
+        let r = try readPhrase(Phrase(box: Box(x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1)), page: page, model: model)
+        let text = lyricText(r.text.trimmingCharacters(in: .whitespaces), height: w.y1 - w.y0, tallest: tallest)
+        let box = Box(x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1)
+        let ok = r.score >= lyricScoreMin && text.contains(where: \.isLetter) && text.count <= 24
+          && !chords.contains(where: { overlaps($0, box) })
+          && lyricWord(text, syllable: w.hyphenAfter || (read.last.map { $0.0.hyphenAfter } ?? false))
+        read.append((w, ok ? text : nil))
+      }
+      // small print, a copyright line, or a line most of whose words are not lyric words: not lyrics
+      let all = read.compactMap { $0.1 }.joined(separator: " ").lowercased()
+      let small = ["copyright", "©", "rights reserved", "music group", "publishing", "selling agent", "used by permission"]
+      let kept = read.filter { $0.1 != nil }.count
+      if small.contains(where: { all.contains($0) }) || kept * 2 < read.count {
+        read = read.map { ($0.0, nil) }
+      }
+      readLines.append((line[0].staff, read))
+    }
+    // Verses are numbered
+    // among those lines only, so a stray line of marks above them does not push verse 1 down.
+    var verseOf: [Int: Int] = [:]   // staff -> lyric lines so far
+    var out: [ScoreLyric] = []
+    var carried: [Int: Bool] = [:]   // verse -> the last line ended in a hyphen
+    for line in readLines {
+      // three or more words, two of them of two letters or more: a credit ("by Berlin"), a cue ("Hi drums enter")
+      // or a stray reading is shorter
+      let good = line.words.compactMap(\.text)
+      guard good.count >= lyricLineWords, good.filter({ $0.filter(\.isLetter).count >= 2 }).count >= 2 else { continue }
+      let verse = verseOf[line.staff, default: 0]
+      verseOf[line.staff] = verse + 1
+      var hyphenBefore = carried[verse] ?? false
+      var lastHyphen = false
+      for (w, text) in line.words {
+        guard let text else {
+          hyphenBefore = false
+          continue
+        }
+        // a word read with a hyphen inside, over as many notes: one syllable each
+        var parts = [text]
+        let pieces = text.split(separator: "-").map(String.init).filter { !$0.isEmpty }
+        if pieces.count > 1, pieces.count - 1 <= w.moreNoteIDs.count { parts = pieces }
+        let ids = [w.noteID] + w.moreNoteIDs
+        for (i, part) in parts.enumerated() {
+          let before = i > 0 || hyphenBefore, after = i < parts.count - 1 || w.hyphenAfter
+          let syllabic = before ? (after ? "middle" : "end") : (after ? "begin" : "single")
+          out.append(ScoreLyric(noteID: ids[i], verse: verse + 1, text: part, syllabic: syllabic,
+                                extend: i == parts.count - 1 && w.extendAfter))
+        }
+        hyphenBefore = w.hyphenAfter
+        lastHyphen = w.hyphenAfter
+      }
+      carried[verse] = lastHyphen
+    }
+    return out
   }
 
   // MARK: part names

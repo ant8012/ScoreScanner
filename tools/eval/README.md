@@ -58,3 +58,14 @@ real; bars holding more slashes than beats (two bars merged by a missed bar line
 m7, mi7, MI7, -7, and M, M6, m, m6, 9ths) on every root; `score_sevenths.py` scores root and kind per spelling.
 Nov 15 2026: 1,203 chords on 30 clean pages all right after "M" and "M6" were fixed (they had been written as
 major sevenths); the reader itself never swapped M and m on clean pages.
+
+# Lyrics
+
+`gen_lyrics.py` prints lead sheets with one or two verses (hyphenated words, held syllables with extender lines,
+rests, punctuation) and a note-by-note key; `score_lyrics.py` scores what a scan writes, or lists it (`--list`) on
+pages without a key.
+
+Nov 15 2026: 40 held-out pages, clean 3,201 / 3,406 syllables exactly right (most misses punctuation), 1 false,
+hyphenation 99.8%; rough copies 2,485 right, 29 false. On 37 Real Book and benchmark pages the real lyrics read
+nearly word for word; 4 pages still get one line of instruction text ("Guitar sounds one octave lower...") as
+lyrics.

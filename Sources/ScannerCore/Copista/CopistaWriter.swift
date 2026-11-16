@@ -1583,8 +1583,11 @@ extension Copista {
       if let staffNo { de.sub("staff", staffNo) }
     }
 
+    /// The id a note written from detector symbol `si` carries, so text read later (lyrics) can find it.
+    static func noteID(_ si: Int) -> String { "s\(si)" }
+
     static func note(_ meas: XE, _ e: Event, _ dur: Int, _ voice: Int, _ staffNo: Int?, wholeRest: Bool) {
-      let ne = meas.sub("note")
+      let ne = meas.sub("note", nil, e.kind == "note" && e.si >= 0 && !e.copied ? [("id", noteID(e.si))] : [])
       if e.grace != "none" { ne.sub("grace", nil, e.grace == "unacc" ? [("slash", "yes")] : []) }
       if e.chord { ne.sub("chord") }
       if e.kind == "rest" || e.kind == "mrest" {

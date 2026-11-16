@@ -369,6 +369,14 @@ public enum ScoreReader {
     placed = ScanResult(
       xml: placed.xml, rawXML: placed.rawXML, staffs: placed.staffs, page: Data(), pageWidth: placed.pageWidth,
       pageHeight: placed.pageHeight, seconds: placed.seconds + text.seconds, repairedMeasures: 0)
+    if let lyrics = text.lyrics, !lyrics.isEmpty {
+      // the syllables go onto the notes the scanner tagged
+      let xml = try ScoreLyricsMusicXML.inserting(lyrics, into: placed.xml)
+      placed = ScanResult(
+        xml: xml, rawXML: xml, staffs: placed.staffs, page: placed.page, pageWidth: placed.pageWidth,
+        pageHeight: placed.pageHeight, seconds: placed.seconds, repairedMeasures: placed.repairedMeasures,
+        chordWords: placed.chordWords, chordWordStaffs: placed.chordWordStaffs, lyricWords: placed.lyricWords)
+    }
     return PageReading(scan: placed, chords: chords, text: text, cropImages: [])
   }
 

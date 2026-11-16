@@ -72,7 +72,8 @@ public enum PDFScanner {
           // the page's pixels are not kept once it is read
           pages.append(ScanResult(xml: scan.xml, rawXML: scan.rawXML, staffs: scan.staffs, page: Data(),
                                   pageWidth: 0, pageHeight: 0, seconds: scan.seconds, repairedMeasures: 0,
-                                  chordWords: scan.chordWords, chordWordStaffs: scan.chordWordStaffs))
+                                  chordWords: scan.chordWords, chordWordStaffs: scan.chordWordStaffs,
+                                  lyricWords: scan.lyricWords))
         }
       } catch is CancellationError { throw CancellationError() }
       catch { throw ScannerError.invalid("Page \(number): \(error.localizedDescription)") }
