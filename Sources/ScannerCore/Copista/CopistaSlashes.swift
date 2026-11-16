@@ -1,5 +1,35 @@
 import Foundation
 
+extension Copista.Writer {
+  /// The chord finder's words without the tuplet numbers it took for text: a triplet's "3" over a beam reads as a
+  /// "B" chord. A word goes when a tuplet number the detector is sure of covers most of it and a beam or note sits
+  /// just below that number, where a tuplet's number is printed.
+  static func withoutTupletNumbers(_ words: [ChordFinder.Proposal], _ rd: Copista.Reading) -> [ChordFinder.Proposal] {
+    let L = rd.layout
+    let numbers = L.syms.filter { s in
+      guard (rd.tok[s.i]?.realP ?? 0) >= 0.9, Copista.family(cls(rd, s.i)) == "tupletNum", s.staff >= 0,
+        s.staff < L.staves.count else { return false }
+      let sp = L.staves[s.staff].sp
+      return L.syms.contains { o in
+        guard isReal(rd, o.i) else { return false }
+        let f = Copista.family(cls(rd, o.i))
+        return (f == "beam" || f == "note" || f == "tupletBracket")
+          && o.box.1 >= s.box.3 - 0.3 * sp && o.box.1 - s.box.3 <= 2 * sp
+          && o.box.0 - sp <= s.cx && s.cx <= o.box.2 + sp
+      }
+    }
+    guard !numbers.isEmpty else { return words }
+    return words.filter { w in
+      let area = Double(max(1, (w.x1 - w.x0) * (w.y1 - w.y0)))
+      return !numbers.contains { n in
+        let ox = min(Double(w.x1), n.box.2) - max(Double(w.x0), n.box.0)
+        let oy = min(Double(w.y1), n.box.3) - max(Double(w.y0), n.box.1)
+        return ox > 0 && oy > 0 && ox * oy >= 0.5 * area
+      }
+    }
+  }
+}
+
 extension Copista {
   /// Bars filled with rhythm slashes: a stemless slash per beat on the middle line, as lead sheets print solos and
   /// comping ("fill with slashes"). The detector has no slash class: it reads them as quarter notes on the middle

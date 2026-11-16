@@ -69,3 +69,8 @@ Nov 15 2026: 40 held-out pages, clean 3,201 / 3,406 syllables exactly right (mos
 hyphenation 99.8%; rough copies 2,485 right, 29 false. On 37 Real Book and benchmark pages the real lyrics read
 nearly word for word; 4 pages still get one line of instruction text ("Guitar sounds one octave lower...") as
 lyrics.
+
+`gen_sevenths.py --sus` and `--other` print sus and added-note chords, and diminished, augmented, power, 6/9,
+half-diminished and altered dominants; the key lists each chord's added and altered degrees, which
+`score_sevenths.py` checks. Nov 16 2026: what is read is written right; the reader misreads madd9 as ma9, drops the
+9 of a stacked 6/9, reads aug as aug7, and loses a 13 or add9's number in a third to two thirds of bars.

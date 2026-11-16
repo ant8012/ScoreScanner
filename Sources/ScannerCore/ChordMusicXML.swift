@@ -358,6 +358,14 @@ enum ChordMusicXML {
     } else if quality == "min" && alterations.contains("maj7") {
       kind = "major-minor"
       alterations = alterations.replacingOccurrences(of: "(maj7)", with: "")
+    } else if quality == "maj" && !trailing.isEmpty {
+      // maj7sus4: the suspension with a major seventh added (MuseScore spells it so)
+      kind = trailing.hasSuffix("2") ? "suspended-second" : "suspended-fourth"
+      if extensionValue == "7" { alterations = "(add#7)" + alterations }
+    } else if quality == "sus" && (trailing.hasSuffix("2") || alterations.hasPrefix("2")) {
+      // sus2: the second, not the fourth, takes the third's place (D7sus2 adds the seventh below)
+      kind = "suspended-second"
+      if alterations.hasPrefix("2") { alterations.removeFirst() }
     } else {
       let key = "\(quality)|\(extensionValue)"
       kind = kinds[key] ?? kinds["\(quality)|"] ?? "major"
@@ -409,8 +417,9 @@ enum ChordMusicXML {
       let word = text(1), sign = text(2), value = text(3)
       guard !value.isEmpty else { continue }
       let alter = sign == "#" || sign == "+" ? 1 : sign == "b" ? -1 : 0
+      // "add#11" adds a raised eleventh; only a bare #11 or b9 alters a degree the chord already has
       let type = word == "no" || word == "omit" ? "subtract"
-        : alter == 0 || (susSeventh && value != "5") ? "add" : "alter"
+        : word == "add" || alter == 0 || (susSeventh && value != "5") ? "add" : "alter"
       node.children.append(XMLNode("degree", children: [
         XMLNode("degree-value", text: value), XMLNode("degree-alter", text: "\(alter)"),
         XMLNode("degree-type", text: type),
@@ -473,7 +482,7 @@ enum ChordMusicXML {
   /// number, and every flat, sharp or added degree written after that.
   static func nearestKind(_ suffix: String) -> (kind: String, degrees: [(Int, Int, String)]) {
     func opens(_ prefixes: String...) -> Bool { prefixes.contains { suffix.hasPrefix($0) } }
-    let marks = try! NSRegularExpression(pattern: #"(add|no|omit|[b#+])(\d{1,2})"#)
+    let marks = try! NSRegularExpression(pattern: #"(add[b#]?|no|omit|[b#+])(\d{1,2})"#)
     let whole = NSRange(suffix.startIndex..., in: suffix)
     // The chord's size is its first number that is not itself an alteration or
     // an added degree: 7 in `7sus4(b9)`, none in `add9`.
@@ -481,8 +490,13 @@ enum ChordMusicXML {
     let numbers = core.split { !$0.isNumber }.compactMap { Int($0) }
     let size = numbers.first { [5, 6, 7, 9, 11, 13].contains($0) } ?? 0
     func sized(_ base: String, _ sizes: [Int: String]) -> String { sizes[size] ?? base }
-    let minor = opens("min", "mi", "-", "MI", "Mi") || (opens("m") && !opens("maj", "ma"))
-    let major = opens("maj", "Maj", "MAJ", "ma", "MA", "Ma", "Δ", "∆", "^", "M")
+    // "madd9" is minor: "ma" opens a major quality only when it is not the start of "madd"
+    let minor = opens("min", "mi", "-", "MI", "Mi", "madd") || (opens("m") && !opens("maj", "ma"))
+    let major = !opens("madd") && opens("maj", "Maj", "MAJ", "ma", "MA", "Ma", "Δ", "∆", "^", "M")
+    // a + after the number raises the fifth ("7+" is 7#5); with a major seventh it is maj7#5
+    let raisedFifth = suffix.range(of: #"^\d+\+"#, options: .regularExpression) != nil || suffix.hasSuffix("+")
+    let majorSeventh = suffix.contains("maj7") || suffix.contains("Maj7") || suffix.contains("ma7")
+      || suffix.contains("MA7") || suffix.contains("M7") || suffix.contains("Δ") || suffix.contains("∆")
     var degrees: [(Int, Int, String)] = []
     let kind: String
     if suffix.contains("ø") || suffix.contains("Ø") {
@@ -495,8 +509,19 @@ enum ChordMusicXML {
                           11: "minor-11th", 13: "minor-13th"])
     } else if opens("dim", "o") {
       kind = size == 7 ? "diminished-seventh" : "diminished"
-    } else if opens("aug", "+") {
+    } else if (opens("aug", "+") || raisedFifth) && majorSeventh {
+      kind = "major-seventh"
+      degrees.append((5, 1, "alter"))
+    } else if (opens("aug", "+") || raisedFifth) && [9, 11, 13].contains(size) {
+      // C9+ is a ninth chord with a raised fifth, as MuseScore names it (C9#5)
+      kind = sized("dominant-ninth", [11: "dominant-11th", 13: "dominant-13th"])
+      degrees.append((5, 1, "alter"))
+    } else if opens("aug", "+") || raisedFifth {
       kind = size == 7 ? "augmented-seventh" : "augmented"
+    } else if major && suffix.contains("sus") {
+      // maj7sus4: the suspension with a major seventh added
+      kind = suffix.contains("sus2") ? "suspended-second" : "suspended-fourth"
+      if size == 7 || majorSeventh { degrees.append((7, 1, "add")) }
     } else if major {
       // "M", "maj" and "MA" with no number are the major triad and "M6" its sixth (DM is D major, not Dmaj7);
       // the triangle alone means the seventh
@@ -530,6 +555,8 @@ enum ChordMusicXML {
       else { continue }
       switch suffix[markRange] {
       case "add": degrees.append((value, 0, "add"))
+      case "add#": degrees.append((value, 1, "add"))
+      case "addb": degrees.append((value, -1, "add"))
       case "no", "omit": degrees.append((value, 0, "subtract"))
       case "b": degrees.append((value, -1, susSeventh && value != 5 ? "add" : "alter"))
       default: degrees.append((value, 1, susSeventh && value != 5 ? "add" : "alter"))

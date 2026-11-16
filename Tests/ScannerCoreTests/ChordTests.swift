@@ -539,6 +539,59 @@ struct ChordTests {
     for (suffix, kind) in kinds { #expect(ChordMusicXML.nearestKind(suffix).kind == kind, "\(suffix)") }
   }
 
+  @Test func sus2IsASuspendedSecond() {
+    func kind(_ chord: String) -> (String, [String])? {
+      guard let h = ChordMusicXML.harmony(chord, offset: 0) ?? ChordMusicXML.looseHarmony(chord, offset: 0) else {
+        return nil
+      }
+      return (h.first("kind")!.text, h.all("degree").map {
+        "\($0.first("degree-type")!.text) \($0.first("degree-value")!.text) \($0.first("degree-alter")!.text)"
+      })
+    }
+    #expect(kind("Dsus2")?.0 == "suspended-second")
+    #expect(kind("D7sus2")?.0 == "suspended-second" && kind("D7sus2")?.1 == ["add 7 0"])
+    #expect(kind("Dsus2/F#")?.0 == "suspended-second")
+    #expect(kind("Dsus2(add9)")?.0 == "suspended-second" && kind("Dsus2(add9)")?.1 == ["add 9 0"])
+    // the fourth stays the fourth
+    #expect(kind("Dsus4")?.0 == "suspended-fourth")
+    #expect(kind("Dsus")?.0 == "suspended-fourth")
+    #expect(kind("D7sus4")?.1 == ["add 7 0"])
+    // added seconds and ninths are major chords with the note added
+    #expect(kind("Dadd9")?.0 == "major" && kind("Dadd9")?.1 == ["add 9 0"])
+    #expect(kind("D2")?.0 == "major" && kind("D2")?.1 == ["add 2 0"])
+  }
+
+  /// Spellings a chord audit through MuseScore found misnamed: each must give the kind and degrees MuseScore names
+  /// as the printed chord.
+  @Test func auditedSpellingsGiveTheirChord() {
+    func written(_ chord: String) -> String {
+      guard let h = ChordMusicXML.harmony(chord, offset: 0) ?? ChordMusicXML.looseHarmony(chord, offset: 0) else {
+        return "none"
+      }
+      let degrees = h.all("degree").map {
+        "\($0.first("degree-type")!.text)\($0.first("degree-value")!.text)\($0.first("degree-alter")!.text)"
+      }
+      return ([h.first("kind")!.text] + degrees).joined(separator: " ")
+    }
+    #expect(written("Cmadd9") == "minor add90")        // was major
+    #expect(written("C-add9") == "minor add90")
+    #expect(written("C7+") == "augmented-seventh")     // was a plain seventh
+    #expect(written("C9+") == "dominant-ninth alter51")
+    #expect(written("C+maj7") == "major-seventh alter51")   // was augmented-seventh (a flat seventh)
+    #expect(written("Caugmaj7") == "major-seventh alter51")
+    #expect(written("Cmaj7+") == "major-seventh alter51")
+    #expect(written("Cmaj7#5") == "major-seventh alter51")
+    #expect(written("Cmaj7sus4") == "suspended-fourth add71")   // the sus was lost
+    #expect(written("Cmaj7sus2") == "suspended-second add71")
+    #expect(written("Cadd#11") == "major add111")
+    // unchanged
+    #expect(written("C+") == "augmented")
+    #expect(written("C+7") == "augmented-seventh")
+    #expect(written("Cm(add9)") == "minor add90")
+    #expect(written("Cdim7") == "diminished-seventh")
+    #expect(written("Co7") == "diminished-seventh")
+  }
+
   @Test func unfamiliarSuffixesPlayAsTheNearestKind() {
     func degrees(_ suffix: String) -> [String] {
       ChordMusicXML.nearestKind(suffix).degrees.map { "\($0.2) \($0.0) \($0.1)" }

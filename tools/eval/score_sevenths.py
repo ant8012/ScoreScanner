@@ -1,4 +1,5 @@
-"""Score the chords a scan writes against gen_sevenths.py's kinds.json, bar by bar: root and MusicXML kind.
+"""Score the chords a scan writes against gen_sevenths.py's kinds.json, bar by bar: root, MusicXML kind and (where
+the key lists them) the added and altered degrees.
 
 usage: python3.12 tools/eval/score_sevenths.py KINDS.json SCAN_DIR
 Prints how each printed spelling was read (right, wrong quality, wrong root, missed) and every major/minor swap.
@@ -22,7 +23,10 @@ def read(path):
         cells = []
         for h in m.findall("harmony"):
             r = h.findtext("root/root-step", "") + ALTER.get(h.findtext("root/root-alter", "0"), "")
-            cells.append((r, h.findtext("kind", "")))
+            deg = sorted(f"{d.findtext('degree-type')}{d.findtext('degree-value')}"
+                         + ("" if d.findtext("degree-type") == "add" else f"{int(d.findtext('degree-alter', '0')):+d}")
+                         for d in h.findall("degree"))
+            cells.append((r, h.findtext("kind", ""), deg))
         bars.append(cells)
     return bars
 
@@ -38,14 +42,16 @@ def main():
         got = read(f)
         for i, want in enumerate(bars):
             have = got[i] if i < len(got) else []
-            for k, (root, kind, text) in enumerate(want):
+            for k, cell in enumerate(want):
+                root, kind, text = cell[:3]
+                degrees = cell[3] if len(cell) > 3 else None   # older keys have no degrees
                 if len(have) != len(want):
                     by[text]["missed"] += 1
                     continue
-                r, g = have[k]
+                r, g, deg = have[k]
                 if r != root:
                     by[text]["wrong root"] += 1
-                elif g == kind:
+                elif g == kind and (degrees is None or deg == degrees):
                     by[text]["right"] += 1
                 else:
                     by[text]["wrong kind"] += 1
