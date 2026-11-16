@@ -109,6 +109,8 @@ extension Copista {
     var tok: [Int: Tok]
     let classes: [String]
     var revised: [Int: [Double]] = [:]
+    /// Bars filled with rhythm slashes (`Slashes.bars`), by layout staff and bar: how many slashes were found.
+    var slashBars: [Int: [Int: Int]] = [:]
     init(layout: Layout, tok: [Int: Tok], classes: [String]) { self.layout = layout; self.tok = tok; self.classes = classes }
   }
 

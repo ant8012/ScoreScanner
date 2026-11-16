@@ -111,6 +111,8 @@ extension Copista {
     var repeatBar = false
     var endClef: String?
     var meter = false
+    /// A bar of rhythm slashes, written with MusicXML's slash measure style.
+    var slash = false
   }
 
   struct BarState: Equatable { var key = 0; var time = "4/4"; var clef = "G2" }
@@ -548,6 +550,24 @@ extension Copista {
         if let c = r.clef { state.clef = seenClef(rd, staff, bar, c) }
       }
       return state
+    }
+
+    /// A bar of rhythm slashes found on the page (`Slashes.bars`): one stemless note per beat on the middle line,
+    /// however many slashes were found or read, in a meter counted in quarters. Nil for any other bar.
+    static func slashEvents(_ rd: Reading, _ staff: Int, _ bar: Int, _ state: BarState) -> [Event]? {
+      guard let found = rd.slashBars[staff]?[bar] else { return nil }
+      let parts = state.time.split(separator: "/").compactMap { Int($0) }
+      guard parts.count == 2, parts[1] == 4, (2...6).contains(parts[0]), found <= parts[0] else { return nil }
+      let L = rd.layout, st = L.staves[staff]
+      let left = L.syms[st.bars[bar]].box.0
+      let right = bar + 1 < st.bars.count ? L.syms[st.bars[bar + 1]].box.0 : st.x1
+      let (step, octave) = pitch(state.clef, 0)
+      return (0..<parts[0]).map { i in
+        let e = Event(x: left + (Double(i) + 0.5) * (right - left) / Double(parts[0]), kind: "note")
+        e.typ = "quarter"; e.voice = 1; e.step = step; e.octave = octave
+        e.alter = Vocab.keyAlter(step, state.key); e.stem = "none"
+        return e
+      }
     }
 
     // MARK: a bar's events
@@ -1243,6 +1263,7 @@ extension Copista {
           var first = [Bool](repeating: true, count: pl.count)
           var measures: [[StaffBar?]] = []
           var prevEvents = [[Event]?](repeating: nil, count: pl.count)
+          var prevSlash = [Bool](repeating: false, count: pl.count)
           for (si, c) in columns {
             let sy = L.systems[si]
             var m: [StaffBar?] = []
@@ -1269,9 +1290,15 @@ extension Copista {
                 marks.endClef = marks2.endClef ?? marks.endClef
                 marks.repeatBar = marks.repeatBar || marks2.repeatBar
               }
+              if bars.count == 1, let slashes = slashEvents(rd, staff, j, state[ki]) {
+                ev = slashes
+                marks.slash = true
+              }
               if marks.repeatBar && ev.isEmpty, let prev = prevEvents[ki], !prev.isEmpty {
                 ev = prev.map { e in let c = e.copy(); c.copied = true; return c }
+                marks.slash = prevSlash[ki]
               }
+              prevSlash[ki] = marks.slash
               let vs = voices(ev, L.staves[staff].sp, singleStaffPart: pl.count == 1, barLen: timeLen(state[ki].time), score: &fit)
               if !ev.isEmpty { prevEvents[ki] = ev }
               m.append(StaffBar(staff: staff, bar: j, voices: vs, dirs: dirs, marks: marks, state: state[ki]))
@@ -1349,6 +1376,7 @@ extension Copista {
         let spanFrom = Dictionary(spans.map { ($0.start, $0) }, uniquingKeysWith: { a, _ in a })
         let spanTo = Dictionary(spans.map { ($0.stop, $0) }, uniquingKeysWith: { a, _ in a })
         let multi = pl.count > 1
+        var slashOn = [Bool](repeating: false, count: pl.count)
         for (mi, staves) in measures.enumerated() {
           number += 1
           let meas = part.sub("measure", nil, [("number", number)])
@@ -1390,6 +1418,16 @@ extension Copista {
           lastKey = key; lastTime = time; lastClefs = clefs
           let mr = first.marks.multirest
           if let mr, singlePart, mr > 1, let attrs { attrs.sub("measure-style").sub("multiple-rest", mr) }
+          // slash notation starts and stops with the slash bars, staff by staff
+          for (ki, st) in staves.enumerated() {
+            let want = st?.marks.slash ?? false
+            guard want != slashOn[ki] else { continue }
+            let a = attrs ?? meas.sub("attributes")
+            attrs = a
+            a.sub("measure-style", nil, multi ? [("number", ki + 1)] : [])
+              .sub("slash", nil, want ? [("type", "start"), ("use-stems", "no")] : [("type", "stop")])
+            slashOn[ki] = want
+          }
           let barLen = timeLen(time)
           let barEnd = barEnds[mi] ?? barLen
           if first.marks.left != nil || spanFrom[mi] != nil {

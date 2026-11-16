@@ -40,3 +40,14 @@ Nov 15 2026: 100 pages (60 clean, 40 bracketed in clean and rough copies), every
 `score_sounds.py` opens each scan in desktop MuseScore 4 and checks the instrument each part gets from the
 `instrument-sound` the scanner writes (and the transposition when the key is printed, "Clarinet in B♭").
 Nov 15 2026: every part right (120) on the 40 bracketed pages, clean and rough.
+
+# Slash bars
+
+`gen_slashes.py` has MuseScore 4 print lead sheets mixing slash bars (MusicXML's slash measure style, as "fill
+with slashes" prints them) with trap bars on the middle line (B quarters, eighths, halves, wholes, accents), plus a
+rough copy of each. `score_slashes.py` scores the bars a scan writes with slashes, or lists them (`--list`) on
+pages without a key.
+
+Nov 15 2026 (scanner build): 38 synthetic pages, clean 420/420 and rough 189/190 slash bars, none false (pages
+whose bar count the detector got wrong are skipped). 37 Real Book and benchmark pages: 14 slash bars written, all
+real; bars holding more slashes than beats (two bars merged by a missed bar line) are left as read.

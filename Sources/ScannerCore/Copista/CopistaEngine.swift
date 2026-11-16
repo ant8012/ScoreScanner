@@ -98,6 +98,7 @@ extension Copista {
         rd = Reading(layout: layout, tok: try evidence.read(layout), classes: meta.classes)
         rd.revised = cuts
       }
+      rd.slashBars = Slashes.bars(page, rd)
       progress("Writing the score")
       return Page(xml: Tidy.apply(Writer.write(rd, title: title, carriedMeter: carriedMeter)), reading: rd, detections: dets,
                   imgsz: imgsz)
