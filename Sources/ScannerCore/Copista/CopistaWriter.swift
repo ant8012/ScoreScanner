@@ -343,6 +343,53 @@ extension Copista {
       return midLine[name] != nil ? name : (name == "perc" ? "perc" : "other")
     }
 
+    /// The reader often puts an 8 under a plain treble clef (on lead sheets that print none), which drops the
+    /// line an octave. An octave clef counts only when the detector saw one too: otherwise the plain clef is kept.
+    static func seenClef(_ read: String, detected: [String]) -> String {
+      guard !detected.isEmpty, !detected.contains(read),
+            let suffix = ["_8b", "_8a", "_15b", "_15a"].first(where: { read.hasSuffix($0) })
+      else { return read }
+      return String(read.dropLast(suffix.count))
+    }
+
+    static func seenClef(_ rd: Reading, _ staff: Int, _ bar: Int, _ read: String) -> String {
+      let detected = rd.layout.syms.filter { $0.staff == staff && $0.bar == bar && $0.cls.hasPrefix("clef_") }
+      return seenClef(read, detected: detected.map { clefOfCls($0.cls) })
+    }
+
+    /// A clef symbol: the reader's clef, without an octave mark the detector did not see.
+    static func seenClef(_ rd: Reading, _ s: Sym) -> String {
+      seenClef(clefOfCls(cls(rd, s.i)), detected: s.cls.hasPrefix("clef_") ? [clefOfCls(s.cls)] : [])
+    }
+
+    /// Dynamics the detector is unsure of are mostly chord names in italics ("F", "B°", "E♭7" read as "p", "pp"),
+    /// above the staff where chord names go; below it they are mostly real. Measured on 1,022 generated pages
+    /// (931 dynamics) and 436 real ones: the 0.6 / 0.3 bars remove 760 of 781 false ones for 39 real ones.
+    static let dynamicAboveP = 0.6, dynamicBelowP = 0.3
+    /// A dynamic inside a word the chord finder found counts only when the detector is this sure.
+    static let dynamicInWordP = 0.8
+
+    static func keptDynamic(_ s: Sym, _ st: Staff) -> Bool {
+      s.p >= (s.cy < st.y0 ? dynamicAboveP : dynamicBelowP)
+    }
+
+    /// Dynamics the writer keeps that sit inside a word the chord finder found above or below a staff, read with
+    /// less than `dynamicInWordP`: a chord name, not a dynamic. On real lead sheets this leaves 4 of 834.
+    static func dynamicsInWords(_ rd: Reading, _ words: [ChordFinder.Proposal]) -> [Int] {
+      let L = rd.layout
+      let text = words.filter { $0.kind == .text }
+      return L.syms.compactMap { s -> Int? in
+        guard s.staff >= 0, s.staff < L.staves.count, isReal(rd, s.i), family(cls(rd, s.i)) == "dynam",
+              s.p < dynamicInWordP, keptDynamic(s, L.staves[s.staff]) else { return nil }
+        let pad = 0.3 * L.staves[s.staff].sp
+        let inside = text.contains {
+          Double($0.x0) - pad <= s.cx && s.cx <= Double($0.x1) + pad && Double($0.y0) - pad <= s.cy
+            && s.cy <= Double($0.y1) + pad
+        }
+        return inside ? s.i : nil
+      }
+    }
+
     static func timeLen(_ t: String) -> Q {
       guard t != "other", t.contains("/") else { return Q(4) }
       let p = t.split(separator: "/").map { Int($0)! }
@@ -396,7 +443,7 @@ extension Copista {
     static func openingClef(_ rd: Reading, _ k: Int) -> String? {
       let bars = rd.layout.staves[k].bars
       guard let b = bars.first, let r = rd.tok[b], r.hasBarHeads else { return nil }
-      return r.clef
+      return r.clef.map { seenClef(rd, k, 0, $0) }
     }
 
     /// Staves of a system that a brace marks as one half of a pair whose other staff was not found (an empty
@@ -498,7 +545,7 @@ extension Copista {
       if let r = rd.tok[rd.layout.staves[staff].bars[bar]], r.hasBarHeads {
         if let k = r.key { state.key = k }
         if let t = r.time { state.time = t }
-        if let c = r.clef { state.clef = c }
+        if let c = r.clef { state.clef = seenClef(rd, staff, bar, c) }
       }
       return state
     }
@@ -508,7 +555,7 @@ extension Copista {
       let L = rd.layout
       let st = L.staves[staff], sp = st.sp
       let syms = Front.stableSorted(L.syms.filter { $0.staff == staff && $0.bar == bar && isReal(rd, $0.i) && $0.fam != "measure" }) { $0.cx < $1.cx }
-      let clefChanges = syms.filter { family(cls(rd, $0.i)) == "clef" }.map { ($0.cx, clefOfCls(cls(rd, $0.i))) }
+      let clefChanges = syms.filter { family(cls(rd, $0.i)) == "clef" }.map { ($0.cx, seenClef(rd, $0)) }
         .sorted { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }
       let notesX = syms.filter { ["note", "rest"].contains(family(cls(rd, $0.i))) }.map(\.cx)
       let firstX = notesX.min() ?? .infinity
@@ -550,7 +597,7 @@ extension Copista {
           events.append(e)
         } else if f == "mRpt" || f == "multiRpt" {
           marks.repeatBar = true
-        } else if f == "dynam" && dyn.contains(String(c.dropFirst(6))) {
+        } else if f == "dynam" && dyn.contains(String(c.dropFirst(6))) && keptDynamic(s, st) {
           dirs.append(Dir(x: s.cx, kind: "dyn", payload: String(c.dropFirst(6)), below: s.cy > st.mid))
         } else if f == "hairpin" && (c == "hairpin_cres" || c == "hairpin_dim") {
           dirs.append(Dir(x: s.box.0, kind: "wedge", payload: c == "hairpin_cres" ? "crescendo" : "diminuendo", below: s.cy > st.mid))
@@ -566,7 +613,7 @@ extension Copista {
         } else if f == "barLine" {
           if c == "barLine_repeat_start" && s.cx < bmid { marks.left = "repeat_start" } else if barRight[c] != nil && s.cx >= bmid { marks.right = c }
         } else if f == "clef" && s.cx > firstX {
-          dirs.append(Dir(x: s.cx, kind: "clef", payload: clefOfCls(c)))
+          dirs.append(Dir(x: s.cx, kind: "clef", payload: seenClef(rd, s)))
         }
       }
       decodeAlters(rd, syms, events, sp)

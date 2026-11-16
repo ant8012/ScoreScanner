@@ -51,7 +51,17 @@ public enum Scanner {
     let page = try Copista.decodeGray(image)
     let read = try engine.read(page, title: title, carriedMeter: carriedMeter, progress: progress)
     guard read.xml.contains("<pitch>") else { throw ScannerError.invalid("No readable music was found") }
-    let xml = Data(read.xml.utf8)
+    progress("Finding chord symbols")
+    let chordWords = ChordFinder.find(
+      gray: page.pixels, width: page.width, height: page.height, layout: ChordFinder.layout(read.reading))
+    // a chord name in italics read as a dynamic ("B°" as "pp"): drop it and write the score again
+    var written = read.xml
+    let fakeDynamics = Copista.Writer.dynamicsInWords(read.reading, chordWords)
+    if !fakeDynamics.isEmpty {
+      for i in fakeDynamics { read.reading.tok[i]?.realP = 0 }
+      written = Copista.Tidy.apply(Copista.Writer.write(read.reading, title: title, carriedMeter: carriedMeter))
+    }
+    let xml = Data(written.utf8)
     // Where each staff and its measures sit, so the chord and text passes can crop the page and place what
     // they read.
     let placed = Copista.Writer.placedStaves(read.reading)
@@ -69,9 +79,6 @@ public enum Scanner {
         voice: s.part, system: s.system, grandStaff: s.grandStaff,
         geometry: (try? JSONSerialization.data(withJSONObject: geometry)) ?? Data("{}".utf8))
     }
-    progress("Finding chord symbols")
-    let chordWords = ChordFinder.find(
-      gray: page.pixels, width: page.width, height: page.height, layout: ChordFinder.layout(read.reading))
     return ScanResult(
       xml: xml, rawXML: xml, staffs: staffs, page: Data(page.pixels), pageWidth: page.width,
       pageHeight: page.height, seconds: Date().timeIntervalSince(start), repairedMeasures: 0,
