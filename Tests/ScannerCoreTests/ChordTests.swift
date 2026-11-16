@@ -592,6 +592,31 @@ struct ChordTests {
     #expect(written("Co7") == "diminished-seventh")
   }
 
+  @Test func aJazzFontTriangleReadAsAnAIsTheTriangle() {
+    #expect(LocalChordReader.accepted("Dba7(#11)") == ["Dbmaj7(#11)"])
+    #expect(LocalChordReader.accepted("GA9/B") == ["Gmaj9/B"])
+    #expect(LocalChordReader.accepted("Gba9($11)") == ["Gbmaj9(#11)"])
+    // a, aug, add and alt where they belong are left alone
+    #expect(LocalChordReader.accepted("Caug") == ["Caug"])
+    #expect(LocalChordReader.accepted("Cadd9") == ["Cadd9"])
+    #expect(LocalChordReader.accepted("Am7") == ["Am7"])
+    #expect(LocalChordReader.accepted("A7") == ["A7"])
+    // after a minor quality too: minor-major
+    #expect(LocalChordReader.accepted("F#mina7") == ["F#minmaj7"])
+    #expect(LocalChordReader.accepted("C-a7") == ["C-maj7"])
+    #expect(LocalChordReader.accepted("Ama9") == ["Ama9"])   // "ma9" is a major ninth as printed, untouched
+    // still not a chord: left out, not guessed
+    #expect(LocalChordReader.accepted("Bbamj7").isEmpty)
+  }
+
+  @Test func unreadableChordsAreNotStaffText() {
+    #expect(LocalTextReader.chordShaped("Dba7(#11)Ba9"))
+    #expect(LocalTextReader.chordShaped("Ebamj7"))
+    #expect(!LocalTextReader.chordShaped("Bass Enters"))
+    #expect(!LocalTextReader.chordShaped("Coda 2"))
+    #expect(!LocalTextReader.chordShaped("A2"))
+  }
+
   @Test func unfamiliarSuffixesPlayAsTheNearestKind() {
     func degrees(_ suffix: String) -> [String] {
       ChordMusicXML.nearestKind(suffix).degrees.map { "\($0.2) \($0.0) \($0.1)" }

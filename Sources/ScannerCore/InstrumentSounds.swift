@@ -102,6 +102,12 @@ enum InstrumentSounds {
     return words.joined(separator: " ")
   }
 
+  /// Whether a name is an instrument's at all (a part label), "Bass" included, whatever its sound.
+  static func isInstrument(_ name: String) -> Bool {
+    let k = key(base(name))
+    return names[k] != nil || keyed[k] != nil || k == "bass"
+  }
+
   /// The instrument for a part from its printed long name, else its short name. "Bass" is a voice beside other
   /// voices and a double bass beside other strings, otherwise unknown.
   static func match(long: String, short: String, others: [String] = []) -> Match? {

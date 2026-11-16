@@ -542,10 +542,14 @@ extension Copista {
       return out
     }
 
-    static func barState(_ rd: Reading, _ staff: Int, _ bar: Int, _ prev: BarState) -> BarState {
+    /// A bar's key, time and clef. The key changes only where the detector saw a key signature in the bar: the
+    /// reader, judging a line in context, can give the line's first bar a key printed only after a double bar
+    /// further along, which moves the change bars early (and with it every accidental between). A staff's first bar
+    /// takes the reader's key as it is.
+    static func barState(_ rd: Reading, _ staff: Int, _ bar: Int, _ prev: BarState, first: Bool = false) -> BarState {
       var state = prev
       if let r = rd.tok[rd.layout.staves[staff].bars[bar]], r.hasBarHeads {
-        if let k = r.key { state.key = k }
+        if let k = r.key, first || k == prev.key || keySignatureSeen(rd, staff, bar) { state.key = k }
         if let t = r.time { state.time = t }
         if let c = r.clef { state.clef = seenClef(rd, staff, bar, c) }
       }
@@ -567,6 +571,12 @@ extension Copista {
         e.typ = "quarter"; e.voice = 1; e.step = step; e.octave = octave
         e.alter = Vocab.keyAlter(step, state.key); e.stem = "none"
         return e
+      }
+    }
+
+    static func keySignatureSeen(_ rd: Reading, _ staff: Int, _ bar: Int) -> Bool {
+      rd.layout.syms.contains { s in
+        s.staff == staff && s.bar == bar && isReal(rd, s.i) && family(cls(rd, s.i)) == "keySig"
       }
     }
 
@@ -1272,7 +1282,7 @@ extension Copista {
               let cols = sy.columns[sy.staves.firstIndex(of: staff)!]
               let bars = cols.indices.filter { cols[$0] == c }
               guard let j = bars.first else { m.append(nil); continue }
-              state[ki] = barState(rd, staff, j, state[ki])
+              state[ki] = barState(rd, staff, j, state[ki], first: first[ki])
               if first[ki] {
                 first[ki] = false
                 if let opening { state[ki].time = opening }

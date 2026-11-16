@@ -158,6 +158,7 @@ public enum LocalChordReader {
     let bounds = geometries.map { g in [g.minx] + g.barlines.map(\.x) + [g.maxx] }
     var labels: [Int: [Int: [Placed]]] = [:]
     var crops: [AppleChordCropAnalysis] = []
+    var boxedLetters: [Placed] = []
     var skipped = (lower: 0, unplaced: 0, alternates: 0, basses: 0, strays: 0)
     for word in scan.chordWords where word.kind == .text {
       try Task.checkCancellation()
@@ -193,6 +194,21 @@ public enum LocalChordReader {
             AppleChordReading(visibleText: reading.text, proposedChord: $0, acceptedChord: $0, verdict: verdict)
           },
         ignoredShortText: []))
+      // a single letter in a box is a rehearsal mark, not a chord: a tall box often stands above the band the finder
+      // looks at, so the finder sees the letter without its frame
+      if chords.count == 1, chords[0].count == 1, boxed(page, word, sp: g.unit) {
+        let label = ChordLabel(
+          text: reading.text, chord: chords[0], confidence: Float(reading.score), x0: Double(word.x0),
+          x1: Double(word.x1), bar: measure, measureNumber: nil, partID: nil, beat: nil, beatUnit: nil,
+          timingSource: nil, timingStatus: nil, word: wordKey(word.x0, word.y0, word.x1, word.y1))
+        if ProcessInfo.processInfo.environment["SCANNER_TEXT_DEBUG"] != nil {
+          print("BOXED LETTER \"\(chords[0])\" \(word.x0),\(word.y0),\(word.x1),\(word.y1)")
+        }
+        boxedLetters.append(Placed(label: label, upper: word.upperRow, x0: word.x0, y0: word.y0, x1: word.x1,
+                                   y1: word.y1, overNote: false, sp: g.unit))
+        skipped.strays += 1
+        continue
+      }
       // several chords read in one word share its width; only a single one keeps the finder's beat
       let width = Double(word.x1 - word.x0) / Double(max(1, chords.count))
       for (k, chord) in chords.enumerated() {
@@ -207,7 +223,7 @@ public enum LocalChordReader {
           overNote: word.beatSource == "note", sp: g.unit))
       }
     }
-    var letters: [Placed] = []
+    var letters: [Placed] = boxedLetters
     // a joined bass's own word is part of a chord too
     var joinedBasses: [String] = []
     let before = Set(labels.values.flatMap(\.values).flatMap { $0 }.compactMap(\.label.word))
@@ -293,6 +309,27 @@ public enum LocalChordReader {
   static func tidy(_ measures: inout [Int: [Placed]]) -> (joined: Int, dropped: Int) {
     var letters: [Placed] = []
     return tidy(&measures, letters: &letters)
+  }
+
+  /// Whether a closed rectangle surrounds a word on the page: a line of ink above, below, left and right of it, each
+  /// within a little over a staff space and running the word's whole width or height.
+  static func boxed(_ page: Image, _ word: ChordFinder.Proposal, sp: Double) -> Bool {
+    let reach = Int(1.3 * sp), pad = Int(0.2 * sp)
+    func ink(_ x: Int, _ y: Int) -> Bool {
+      x >= 0 && y >= 0 && x < page.width && y < page.height && page.pixels[y * page.width + x] < 128
+    }
+    func row(_ y: Int) -> Bool {
+      let xs = (word.x0 - pad)..<(word.x1 + pad)
+      return Double(xs.filter { ink($0, y) }.count) >= 0.85 * Double(xs.count)
+    }
+    func column(_ x: Int) -> Bool {
+      let ys = word.y0..<word.y1
+      return Double(ys.filter { ink(x, $0) }.count) >= 0.85 * Double(ys.count)
+    }
+    return ((word.y0 - reach)..<word.y0).contains(where: row)
+      && ((word.y1 + 1)...(word.y1 + reach)).contains(where: row)
+      && ((word.x0 - reach)..<word.x0).contains(where: column)
+      && ((word.x1 + 1)...(word.x1 + reach)).contains(where: column)
   }
 
   /// `letters` receives the left-out letters that open their line (likely rehearsal letters).

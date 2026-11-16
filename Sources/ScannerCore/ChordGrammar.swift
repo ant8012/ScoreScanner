@@ -10,7 +10,8 @@ enum ChordGrammar {
   /// Root, quality (the jazz triangle included), extension, alterations, bass.
   static let chord = expression(
     "[A-G][b#\u{266d}\u{266f}]?"
-      + "(?:maj|min|dim|aug|sus|MA|Ma|ma|MI|Mi|mi|[\u{25b3}\u{0394}+\\-om\u{00f8}])?"
+      // a minor quality may go on with maj (a minor-major seventh: Cminmaj7, C-maj7, Cmmaj7)
+      + "(?:(?:min|mi|MI|Mi|m|-)maj|maj|min|dim|aug|sus|MA|Ma|ma|MI|Mi|mi|[\u{25b3}\u{0394}+\\-om\u{00f8}])?"
       + "(?:6/9|69|13|11|[5679])?"
       + "(?:\\((?:(?:no|omit|add)\\d{1,2}|(?:[b#\u{266d}\u{266f}+]?\\d{1,2}){1,2})\\)"
       + "|[b#+]\\d{1,2}){0,2}"
@@ -31,6 +32,15 @@ enum ChordGrammar {
     // Read correctly, but folded to letters before the CJK filter runs, since
     // the jazz triangle sits in that range.
     (expression("[\u{25b3}\u{0394}\u{2206}]"), "maj"),
+    // a jazz font's small triangle read as a letter a: no chord puts an a between the root and a number or a
+    // bracket (aug, add and alt go on with letters), so there it is the triangle
+    (expression("(?<=^[A-G])[aA](?=[0-9(])"), "maj"),
+    (expression("(?<=^[A-G][b#])[aA](?=[0-9(])"), "maj"),
+    // the same after "min" or "-": F#mina7 is F#min with the triangle (a minor-major seventh). Not after a bare
+    // m: "ma7" is a major seventh as printed
+    (expression("(?<=^[A-G][b#]?(?:min|-))[aA](?=[0-9(])"), "maj"),
+    // a sharp read as a dollar sign, before a number or in a bracket
+    (expression("\\$(?=[0-9])"), "#"),
     (expression("(?<=[A-G])M[13](?![0-9])"), "m"),
     (expression("(?<=[A-G][b#])M[13](?![0-9])"), "m"),
     (expression("(?<=[A-G])(?:MI|Mi)(?![a-z])"), "m"),

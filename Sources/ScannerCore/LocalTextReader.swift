@@ -58,6 +58,7 @@ enum LocalTextReader {
     var readings: [AppleStaffTextReading] = []
     var headerLines: [Phrase] = []
     var headerUsed: [Box] = []
+    var partLabel: String?
     let chordBoxes = firstChords.map { Box(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) }
     if header && first.miny > sp {
       // down to the first staff, leaving out the first line's chords
@@ -70,6 +71,15 @@ enum LocalTextReader {
       let found = headerMetadata(headerLines, pageWidth: page.width, sp: sp)
       metadata = found.metadata
       headerUsed = found.used
+      // a part printed on its own names its instrument at the top left ("Bass", "Piano"): the part's name, and
+      // not staff text
+      if let label = headerLines.first(where: { l in
+        Double(l.box.x1) < 0.3 * Double(page.width) && l.score >= 0.8 && l.text.count <= 24
+          && InstrumentSounds.isInstrument(l.text) && !headerUsed.contains(where: { overlaps($0, l.box) })
+      }) {
+        partLabel = label.text
+        headerUsed.append(label.box)
+      }
     }
 
     // Staff text: the finder's words that are not chords, joined into runs on one line.
@@ -203,6 +213,10 @@ enum LocalTextReader {
     if header {
       progress("Reading part names")
       names = try partNames(page: page, staffs: geometries, model: model)
+      // one part with no name beside its staff: the label at the top left names it
+      if let label = partLabel, names?.long.count == 1, names?.long.first?.isEmpty ?? true {
+        names?.long = [label.capitalized]
+      }
     }
     return AppleScoreTextAnalysis(
       route: route, routeNote: nil, metadata: metadata?.isEmpty == true ? nil : metadata,
@@ -629,10 +643,24 @@ enum LocalTextReader {
       letters.lowercased().contains(where: { "aeiouy".contains($0) })
     else { return nil }
     if ChordText.modelSymbols(visibleText: text, proposedChord: text).verdict != .blocked { return nil }
+    if chordShaped(text) {
+      if ProcessInfo.processInfo.environment["SCANNER_TEXT_DEBUG"] != nil { print("DROPPED CHORD-SHAPED \"\(text)\"") }
+      return nil
+    }
     let dynamics: Set<String> = ["ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "sfz", "fp", "cresc", "dim"]
     if dynamics.contains(letters.lowercased()) { return nil }
     if lyricLike(text) { return nil }
     return text
+  }
+
+  /// A chord the reader could not make out ("Dba7(#11)Ba9"): a root letter, then no space, a number or bracket
+  /// within it. Better left out than printed over the staff as words.
+  static func chordShaped(_ text: String) -> Bool {
+    let tokens = text.split(whereSeparator: \.isWhitespace)
+    return !tokens.isEmpty && tokens.allSatisfy { t in
+      t.count >= 4 && "ABCDEFG".contains(t.first!) && t.contains(where: { $0.isNumber || $0 == "(" })
+        && t.dropFirst().filter(\.isLetter).allSatisfy { !"eiou".contains($0) || t.contains("sus") }
+    }
   }
 
   // MARK: the header
