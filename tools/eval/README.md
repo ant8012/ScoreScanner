@@ -51,3 +51,10 @@ pages without a key.
 Nov 15 2026 (scanner build): 38 synthetic pages, clean 420/420 and rough 189/190 slash bars, none false (pages
 whose bar count the detector got wrong are skipped). 37 Real Book and benchmark pages: 14 slash bars written, all
 real; bars holding more slashes than beats (two bars merged by a missed bar line) are left as read.
+
+# Major and minor sevenths
+
+`gen_sevenths.py` prints lead sheets mixing every common spelling of major and minor chords (M7, maj7, MA7, Δ7 /
+m7, mi7, MI7, -7, and M, M6, m, m6, 9ths) on every root; `score_sevenths.py` scores root and kind per spelling.
+Nov 15 2026: 1,203 chords on 30 clean pages all right after "M" and "M6" were fixed (they had been written as
+major sevenths); the reader itself never swapped M and m on clean pages.

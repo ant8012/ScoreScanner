@@ -498,7 +498,15 @@ enum ChordMusicXML {
     } else if opens("aug", "+") {
       kind = size == 7 ? "augmented-seventh" : "augmented"
     } else if major {
-      kind = sized("major-seventh", [9: "major-ninth", 11: "major-11th", 13: "major-13th"])
+      // "M", "maj" and "MA" with no number are the major triad and "M6" its sixth (DM is D major, not Dmaj7);
+      // the triangle alone means the seventh
+      if size == 6 {
+        kind = "major-sixth"
+      } else if size == 0 && !opens("Δ", "∆", "^") {
+        kind = "major"
+      } else {
+        kind = sized("major-seventh", [9: "major-ninth", 11: "major-11th", 13: "major-13th"])
+      }
     } else if suffix.contains("sus") {
       kind = suffix.contains("sus2") ? "suspended-second" : "suspended-fourth"
       // as in `harmony`: add7, then the extension, as MuseScore's chord list spells a sus chord

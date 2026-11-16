@@ -528,6 +528,17 @@ struct ChordTests {
     }
   }
 
+  @Test func capitalMIsMajorAndSmallMIsMinor() {
+    let kinds: [(String, String)] = [
+      ("M", "major"), ("M6", "major-sixth"), ("M7", "major-seventh"), ("M9", "major-ninth"),
+      ("maj", "major"), ("maj6", "major-sixth"), ("maj7", "major-seventh"), ("MA7", "major-seventh"),
+      ("Ma7", "major-seventh"), ("Δ", "major-seventh"), ("Δ7", "major-seventh"),
+      ("m", "minor"), ("m6", "minor-sixth"), ("m7", "minor-seventh"), ("mi7", "minor-seventh"),
+      ("MI7", "minor-seventh"), ("min7", "minor-seventh"), ("-7", "minor-seventh"), ("m9", "minor-ninth"),
+    ]
+    for (suffix, kind) in kinds { #expect(ChordMusicXML.nearestKind(suffix).kind == kind, "\(suffix)") }
+  }
+
   @Test func unfamiliarSuffixesPlayAsTheNearestKind() {
     func degrees(_ suffix: String) -> [String] {
       ChordMusicXML.nearestKind(suffix).degrees.map { "\($0.2) \($0.0) \($0.1)" }
