@@ -4,7 +4,10 @@ Each sheet is written twice by MuseScore from the same MusicXML: once in black (
 every chord symbol in its own colour (the answer key). The colours never change layout, so the coloured pixels of
 chord i are exactly where chord i is printed in the black page.
 
-usage: python3.12 gen.py OUT_DIR COUNT [SEED] [--variety] [--fonts "Font A,Font B"]
+usage: python3.12 gen.py OUT_DIR COUNT [SEED] [--variety] [--fonts "Font A,Font B"] [--focus] [--jazz]
+
+--focus draws half the chords from FOCUS, the spellings the round-3 reader misread (madd9, aug, 6/9, Δ13...).
+--jazz puts every --variety sheet in MuseScore's Jazz chord style.
 
 --variety gives every sheet its own look, for training a chord reader: a random chord font (MuseScore's text fonts
 and the Mac's handwriting-like fonts), size, bold or italic, extension size and height, stacked alterations,
@@ -41,6 +44,33 @@ KINDS = [
 ]
 COMMON = ["", "m", "7", "maj7", "m7", "m7b5", "6", "9", "-7", "Δ7", "7(b9)", "sus4", "13", "mi7", "MI7", "MA7", "mi",
           "7(#9#5)", "7(b9#5)", "6/9", "ma7", "mi9", "mi(b5)"]
+# --focus (round 4): the spellings the round-3 reader misreads, drawn for half the chords. (text, kind, added degrees,
+# altered degrees): MuseScore prints a chord's numbers only when the MusicXML carries them as degrees.
+FOCUS = [
+    ("madd9", "minor", [9], []), ("mi(add9)", "minor", [9], []), ("-add9", "minor", [9], []), ("add9", "major", [9], []),
+    ("add2", "major", [2], []), ("2", "major", [2], []), ("aug", "augmented", [], []), ("+", "augmented", [], []),
+    ("13", "dominant-13th", [], []), ("13#11", "dominant-13th", [], [(11, 1)]), ("9sus4", "suspended-fourth", [7, 9], []),
+    ("sus2", "suspended-second", [], []), ("7sus2", "suspended-second", [7], []), ("sus2(add9)", "suspended-second", [9], []),
+    ("6/9", "major-sixth", [9], []), ("m6/9", "minor-sixth", [9], []), ("Δ", "major-seventh", [], []),
+    ("Δ7", "major-seventh", [], []), ("Δ9", "major-ninth", [], []), ("Δ13", "major-13th", [], []),
+    ("Δ7(#5)", "major-seventh", [], [(5, 1)]), ("Δ13(#5)", "major-13th", [], [(5, 1)]),
+    ("Δ(#11)", "major-seventh", [], [(11, 1)]), ("Δ7(#11)", "major-seventh", [], [(11, 1)]),
+    ("maj7(#5)", "major-seventh", [], [(5, 1)]), ("o7", "diminished-seventh", [], []), ("o", "diminished", [], []),
+    ("ø7", "half-diminished", [], []), ("m7b5", "half-diminished", [], []), ("min7(b6)", "minor-seventh", [], [(13, -1)]),
+    ("min(omit3)", "minor", [], []), ("7sus(add3)", "suspended-fourth", [7, 3], []), ("sus4", "suspended-fourth", [], []),
+    ("7sus4", "suspended-fourth", [7], []), ("m(maj7)", "major-minor", [], []), ("dim", "diminished", [], []),
+]
+# Drawn with MuseScore's symbols (<kind use-symbols="yes">): the small triangle, circle, ø and + of the Jazz style.
+# A kind text of Δ7 is not enough: MuseScore reprints it as maj7.
+SYMBOLS = [
+    ("major-seventh", [], []), ("major-seventh", [], [(5, 1)]), ("major-seventh", [], [(11, 1)]),
+    ("major-ninth", [], []), ("major-ninth", [], [(11, 1)]), ("major-13th", [], []), ("major-13th", [], [(5, 1)]),
+    ("major-13th", [], [(11, 1)]), ("diminished-seventh", [], []), ("diminished", [], []),
+    ("half-diminished", [], []), ("augmented", [], []), ("minor-seventh", [], []), ("minor-ninth", [], []),
+    ("major-seventh", [], []), ("diminished-seventh", [], []), ("half-diminished", [], []),
+]
+FOCUS_SHARE = 0.0
+
 ARTICULATIONS = ['<accent placement="above"/>', '<strong-accent placement="above" type="up"/>',
                  '<staccato placement="above"/>', '<tenuto placement="above"/>', '<staccatissimo placement="above"/>',
                  '<strong-accent placement="above" type="up"/>']
@@ -76,11 +106,14 @@ MUSIC_FONTS = [("Leland", "Leland Text"), ("Bravura", "Bravura Text"), ("Petalum
                ("Finale Broadway", "Finale Broadway Text")]
 
 
+JAZZ_SHARE = 0.4   # --jazz: every sheet in MuseScore's Jazz chord style (superscripts, small triangle and circle)
+
+
 def variety_style(rng):
     """A random look for one sheet: the .mss body and a short description."""
     font = rng.choice(CHORD_FONTS)
     music, music_text = rng.choice(MUSIC_FONTS)
-    jazz = rng.random() < 0.4
+    jazz = rng.random() < JAZZ_SHARE
     look = dict(font=font, music=music, jazz=jazz, size=rng.choice([9, 10, 10, 11, 12, 13, 14]),
                 style=rng.choice([0, 0, 0, 1, 2]),              # normal, bold, italic
                 ext_mag=round(rng.uniform(0.7, 1.0), 2), ext_adj=round(rng.uniform(-0.8, 0.0), 1),
@@ -110,15 +143,25 @@ def colour(i):
 def chord(rng):
     step = rng.choice(STEPS)
     alter = rng.choice([0, 0, 0, -1, -1, 1])
-    text = rng.choice(COMMON if rng.random() < 0.7 else [k for k, _ in KINDS])
-    kind = dict(KINDS)[text] if text in dict(KINDS) else "major"
+    degrees = None
+    symbols = False
+    if rng.random() < FOCUS_SHARE * 0.4:
+        kind, add, alt = rng.choice(SYMBOLS)
+        text, symbols = "", True
+        degrees = [(d, 0, "add") for d in add] + [(d, a, "alter" if d == 5 else "add") for d, a in alt]
+    elif rng.random() < FOCUS_SHARE:
+        text, kind, add, alt = rng.choice(FOCUS)
+        degrees = [(d, 0, "add") for d in add] + [(d, a, "alter" if d == 5 else "add") for d, a in alt]
+    else:
+        text = rng.choice(COMMON if rng.random() < 0.7 else [k for k, _ in KINDS])
+        kind = dict(KINDS)[text] if text in dict(KINDS) else "major"
     bass = None
     if rng.random() < 0.25:
         bass = (rng.choice(STEPS), rng.choice([0, 0, -1, 1]))
     name = step + {0: "", -1: "b", 1: "#"}[alter] + text
     if bass:
         name += "/" + bass[0] + {0: "", -1: "b", 1: "#"}[bass[1]]
-    return dict(step=step, alter=alter, text=text, kind=kind, bass=bass, name=name)
+    return dict(step=step, alter=alter, text=text, kind=kind, bass=bass, name=name, degrees=degrees, symbols=symbols)
 
 
 def harmony_xml(c, rgb):
@@ -127,9 +170,14 @@ def harmony_xml(c, rgb):
     root = f"<root><root-step>{c['step']}</root-step>" + (
         f"<root-alter>{c['alter']}</root-alter>" if c["alter"] else "") + "</root>"
     kind = f'<kind text="{c["text"]}">{c["kind"]}</kind>' if c["text"] else f'<kind text="">{c["kind"]}</kind>'
+    if c.get("symbols"):
+        kind = f'<kind use-symbols="yes">{c["kind"]}</kind>'
     # Alterations and added tones as MusicXML degrees: MuseScore drops them when they are only in the kind's text.
     degrees = ""
-    if c["kind"] not in ("half-diminished",):
+    if c.get("degrees") is not None:
+        degrees = "".join(f"<degree><degree-value>{d}</degree-value><degree-alter>{a}</degree-alter>"
+                          f"<degree-type>{t}</degree-type></degree>" for d, a, t in c["degrees"])
+    elif c["kind"] not in ("half-diminished",):
         for acc, num in re.findall(r"([b#])(5|9|11|13)", c["text"]):
             alter = -1 if acc == "b" else 1
             typ = "alter" if num == "5" else "add"
@@ -293,7 +341,11 @@ def printed_chords(mscx):
         if not root:
             out.append(None)
             continue
-        text = tpc_name(root.group(1)) + (name.group(1) if name else "")
+        quality = name.group(1) if name else ""
+        # symbol spellings as drawn: ^ and t are MuseScore's triangle, a leading 0 its half-diminished ø
+        quality = re.sub(r"^(\^|t)", "Δ", quality)
+        quality = re.sub(r"^0", "ø", quality)
+        text = tpc_name(root.group(1)) + quality
         if bass:
             text += "/" + tpc_name(bass.group(1))
         out.append(text.replace("&amp;", "&"))
@@ -304,6 +356,11 @@ def main():
     skip = {i + 1 for i, a in enumerate(sys.argv) if a == "--fonts"}
     args = [a for i, a in enumerate(sys.argv) if i > 0 and i not in skip and not a.startswith("--")]
     variety = "--variety" in sys.argv
+    global FOCUS_SHARE, JAZZ_SHARE
+    if "--focus" in sys.argv:
+        FOCUS_SHARE = 0.5
+    if "--jazz" in sys.argv:
+        JAZZ_SHARE = 1.0
     if "--fonts" in sys.argv:
         # --fonts replaces the chord fonts --variety picks from (e.g. only handwriting-style fonts)
         CHORD_FONTS[:] = [f.strip() for f in sys.argv[sys.argv.index("--fonts") + 1].split(",") if f.strip()]

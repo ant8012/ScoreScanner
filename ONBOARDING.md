@@ -28,7 +28,7 @@ apps call. In order:
    - PDFs: `PDFScanner` renders pages at 2480 px and `CopistaMerge` joins them.
 2. **Chord names, on the device** (`chordReader: .onDevice`, the default). `ChordFinder` (a port of
    `tools/chordfind/find.py`, kept identical by `finder_parity.py`) finds each word above the staves with its bar and
-   beat. `LocalChordReader` cuts it as `export_crops.py` does and reads it with the round 3 PP-OCRv6 small model
+   beat. `LocalChordReader` cuts it as `export_crops.py` does and reads it with the round 4 PP-OCRv6 small model
    (`chord_rec.onnx`, from `export_onnx.py`). `ChordText` judges the reading, and `ChordMusicXML` writes it as
    `<harmony>` at the finder's measure and beat. A page with a single chord-like word is taken to print none.
    With `chordReader: .appleModel` the old route runs instead: `ChordBands`, `ChordPresence` and `ChordImageCrops`

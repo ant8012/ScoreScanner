@@ -236,6 +236,31 @@ On the two New Real Book pages Private Cloud Compute read (127 chords): cloud 11
 round 3 114 / 118 / 5 (round 2: 105 / 109 / 5). A Sleepin' Bee 61 -> 68 of 77, equal to the cloud. Overall exact is
 flat: Real Book set 2 dropped 190 -> 187 and its false chords rose 14 -> 18.
 
+Round 4 (full4, Nov 16 2026), aimed at round 3's misreads (`NEXT_RUNPOD_RUN.md`): `gen.py --focus` (half the chords
+from the misread spellings: madd9, aug, 6/9, 13, add9, 2, sus2(add9), min(omit3)...) and `--jazz` (the Jazz chord
+style), and drawn triangles and circles: MuseScore reprints a typed "Δ7" as "maj7", so round 3 had never seen a
+triangle; `<kind use-symbols="yes">` draws them. Four batches (MuseJazz + Jazz style, all fonts + Jazz style, focus,
+handwriting fonts) on top of round 3's data: 1,995 pages, 73,501 crops (2,574 Δ, 518 ø). Trained on one rented H200,
+round 3's settings. Scanned with `ScannerCheck --read-image` (the whole pipeline), round 3 vs round 4:
+
+| Check | Round 3 | Round 4 |
+| --- | --- | --- |
+| Chord benchmark, 20 pages (exact / root / false) | 667 / 711 / 14 | 678 / 711 / 14 |
+| - real (3 charts) | 118 / 124 / 1 | 115 / 121 / 3 |
+| - Real Books (8 pages) | 354 / 378 / 1 | 362 / 377 / 2 |
+| - Real Books 2 (9 pages) | 195 / 209 / 12 | 201 / 213 / 9 |
+| MuseJazz hold-out, 30 sheets, 833 chords | 598 / 739 / 29 | 718 / 769 / 24 |
+| `--sus` sheets: 2, add9, sus2(add9) right | 26, 32, 0 | 75, 85, 74 (every sus kind right, none missed) |
+| `--other` sheets: madd9, aug, 6/9, m6/9 right | 3, 6, 4, 0 | 39, 41, 39, 39 |
+| major/minor swaps (`--other`) | 16 (madd9 as major) | 0 |
+| Major/minor sheets, 30 clean (1,202 chords) | all right | 1,191: a plain "M" read as "M7" 11 times of 60 |
+| Lyrics 40 / slash 60 / part-name 40 pages | | 3,201 syllables, 1 false / 598 slash bars, 0 false / 120 + 120 names right |
+
+On Jack's charts: Travelers' triangles read as major (AΔ13, G♭Δ7, BΔ7, EΔ7(♯5); F7sus(add3) found),
+Roadside Distraction's BΔ(♯11) five times of six. New misreads, for round 5: plain "M" given a 7; in Real Book
+handwriting a G7 read as Gø7 (3 times on Cheek to Cheek) and a ♯o7 as a triangle once. 13 and 13♯11 still come out
+as plain major chords in a third of bars, as in round 3: not the reader (`REMAINING_ISSUES.md`).
+
 ### Finder: marks on notes and loosely set fonts (November 2026)
 
 Two finder changes, in `find.py` and `ChordFinder.swift` alike:
@@ -280,7 +305,7 @@ fermata and accent crops are gone. No chord lost, no new false chord.
 
 ### On-device reader in ScannerCore (November 2026)
 
-`export_onnx.py` exports round 3 to ONNX (`chord_rec.onnx`, 21 MB, with `chord_rec_dict.txt`); paddle2onnx 2.1
+`export_onnx.py` exports the reader (round 3, now round 4) to ONNX (`chord_rec.onnx`, 21 MB, with `chord_rec_dict.txt`); paddle2onnx 2.1
 cannot convert Paddle 3.3's `linear_v2`, so the export swaps it for the same matmul + add. `onnx_bench.py` reads crops
 with it: identical text to the Paddle model on all 1,187 benchmark crops (read one at a time). `LocalChordReader`
 (Swift) cuts crops as `export_crops.py` does (Pillow's Lanczos, bit for bit) and prepares the model input as PaddleX
