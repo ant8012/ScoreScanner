@@ -142,15 +142,48 @@ public enum ScoreMetadataMusicXML {
   private static func insertPartNames(_ names: [String], abbreviations: [String], into root: XMLNode) {
     let parts = root.first("part-list")?.all("score-part") ?? []
     guard names.count == parts.count else { return }
+    let shorts = abbreviations.count == parts.count ? abbreviations : [String](repeating: "", count: parts.count)
     for (k, part) in parts.enumerated() {
-      guard let name = cleaned(names[k]), let partName = part.first("part-name") else { continue }
+      guard let name = cleaned(names[k]), let partName = part.first("part-name"),
+        var at = part.children.firstIndex(where: { $0 === partName })
+      else { continue }
       partName.text = name
       partName.attributes["print-object"] = nil
-      guard abbreviations.count == parts.count, let short = cleaned(abbreviations[k]), part.first("part-abbreviation") == nil,
-        let at = part.children.firstIndex(where: { $0 === partName })
+      if let short = cleaned(shorts[k]), part.first("part-abbreviation") == nil {
+        at += 1
+        part.children.insert(XMLNode("part-abbreviation", text: short), at: at)
+      }
+      // the instrument the name stands for, so the part plays with its sound
+      let others = names.indices.filter { $0 != k }.map { names[$0] }
+      guard part.first("score-instrument") == nil,
+        let found = InstrumentSounds.match(long: name, short: shorts[k], others: others), let id = part.attributes["id"]
       else { continue }
-      part.children.insert(XMLNode("part-abbreviation", text: short), at: at + 1)
+      let after = part.children.lastIndex { $0.tag == "part-name" || $0.tag == "part-abbreviation" } ?? at
+      part.children.insert(
+        XMLNode("score-instrument", attributes: ["id": "\(id)-I1"], children: [
+          XMLNode("instrument-name", text: found.name), XMLNode("instrument-sound", text: found.sound),
+        ]), at: after + 1)
+      if let t = found.transpose { insertTranspose(t, part: id, into: root) }
     }
+  }
+
+  /// A transposing instrument's printed-to-sounding interval, in its first bar's attributes (after the clefs).
+  private static func insertTranspose(_ t: (diatonic: Int, chromatic: Int), part id: String, into root: XMLNode) {
+    guard let measure = root.all("part").first(where: { $0.attributes["id"] == id })?.first("measure") else { return }
+    let attributes: XMLNode
+    if let existing = measure.first("attributes") {
+      attributes = existing
+    } else {
+      attributes = XMLNode("attributes")
+      measure.children.insert(attributes, at: 0)
+    }
+    guard attributes.first("transpose") == nil else { return }
+    let node = XMLNode("transpose", children: [
+      XMLNode("diatonic", text: String(t.diatonic)), XMLNode("chromatic", text: String(t.chromatic)),
+    ])
+    let later: Set<String> = ["directive", "measure-style"]
+    let at = attributes.children.firstIndex { later.contains($0.tag) } ?? attributes.children.count
+    attributes.children.insert(node, at: at)
   }
 
   private static func insertTitle(_ title: String, into root: XMLNode) {

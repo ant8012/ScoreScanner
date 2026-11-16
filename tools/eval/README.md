@@ -36,3 +36,7 @@ python3.12 tools/eval/score_parts.py tools/chordfind/data/partnames2/truth.json 
 
 Nov 15 2026: 100 pages (60 clean, 40 bracketed in clean and rough copies), every long and short name right
 (600). No names written on 59 lead-sheet and Real Book pages; the chord benchmark unchanged (666 / 710 / 14).
+
+`score_sounds.py` opens each scan in desktop MuseScore 4 and checks the instrument each part gets from the
+`instrument-sound` the scanner writes (and the transposition when the key is printed, "Clarinet in B♭").
+Nov 15 2026: every part right (120) on the 40 bracketed pages, clean and rough.

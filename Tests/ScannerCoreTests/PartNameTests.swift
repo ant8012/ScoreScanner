@@ -43,4 +43,57 @@ struct PartNameTests {
     #expect(LocalTextReader.instrumentName("Cb.") == "Cb.")
     #expect(LocalTextReader.instrumentName("Horn in F") == "Horn in F")
   }
+
+  @Test func trailingPartNumbersAreDropped() {
+    #expect(InstrumentSounds.base("Violin II") == "Violin")
+    #expect(InstrumentSounds.base("Trumpet 2") == "Trumpet")
+    #expect(InstrumentSounds.base("2nd Violin") == "Violin")
+    #expect(InstrumentSounds.base("Vln. I") == "Vln.")
+    // nothing else is cut, and a lone word is kept
+    #expect(InstrumentSounds.base("Clarinet in B♭") == "Clarinet in B♭")
+    #expect(InstrumentSounds.base("V.") == "V.")
+  }
+
+  @Test func namesMatchTheirInstrumentExactly() {
+    #expect(InstrumentSounds.match(long: "Violin I", short: "")?.sound == "strings.violin")
+    #expect(InstrumentSounds.match(long: "Violoncello", short: "")?.sound == "strings.cello")
+    #expect(InstrumentSounds.match(long: "Contrabass", short: "")?.sound == "strings.contrabass")
+    // the short name when no long one was read
+    #expect(InstrumentSounds.match(long: "", short: "Vla.")?.sound == "strings.viola")
+    // not in the table, or only part of a name: no guess
+    #expect(InstrumentSounds.match(long: "Violin obbligato", short: "") == nil)
+    #expect(InstrumentSounds.match(long: "Melody", short: "") == nil)
+  }
+
+  @Test func keysArePrintedBeforeTransposing() {
+    let clarinet = InstrumentSounds.match(long: "Clarinet in B♭", short: "")
+    #expect(clarinet?.sound == "wind.reed.clarinet.bflat")
+    #expect(clarinet?.transpose?.chromatic == -2 && clarinet?.transpose?.diatonic == -1)
+    #expect(InstrumentSounds.match(long: "Horn in F", short: "")?.transpose?.chromatic == -7)
+    // no key printed: the instrument's sound, played as written
+    let plain = InstrumentSounds.match(long: "Clarinet", short: "")
+    #expect(plain?.sound == "wind.reed.clarinet" && plain?.transpose == nil)
+  }
+
+  @Test func bassFollowsTheParts() {
+    #expect(InstrumentSounds.match(long: "Bass", short: "", others: ["Soprano", "Alto", "Tenor"])?.sound == "voice.bass")
+    #expect(InstrumentSounds.match(long: "Bass", short: "", others: ["Violin", "Viola"])?.sound == "strings.contrabass")
+    #expect(InstrumentSounds.match(long: "Bass", short: "", others: ["Piano"]) == nil)
+  }
+
+  @Test func theInstrumentAndItsTranspositionAreWritten() throws {
+    let result = try ScoreMetadataMusicXML.insertingRecognizedContent(
+      title: nil, composer: nil, arranger: nil, partNames: ["Violin I", "Clarinet in B♭", "Melody"],
+      partAbbreviations: ["Vln. I", "Cl.", ""], staffText: [], into: score(parts: 3))
+    let root = try XMLNode.parse(result.xml)
+    let parts = root.first("part-list")!.all("score-part")
+    #expect(parts[0].children.map(\.tag) == ["part-name", "part-abbreviation", "score-instrument"])
+    #expect(parts[0].first("score-instrument")?.first("instrument-sound")?.text == "strings.violin")
+    #expect(parts[0].first("score-instrument")?.first("instrument-name")?.text == "Violin")
+    #expect(parts[1].first("score-instrument")?.first("instrument-sound")?.text == "wind.reed.clarinet.bflat")
+    #expect(parts[2].first("score-instrument") == nil)
+    let transposes = root.all("part").map { $0.first("measure")?.first("attributes")?.first("transpose") }
+    #expect(transposes[0] == nil && transposes[2] == nil)
+    #expect(transposes[1]?.first("chromatic")?.text == "-2")
+  }
 }

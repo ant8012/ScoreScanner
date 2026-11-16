@@ -1,0 +1,123 @@
+import Foundation
+
+/// The instrument a printed part name stands for, as a MusicXML `instrument-sound` ID (the standard list every
+/// notation program reads; MuseScore picks its instrument and sound from it). A name counts only when it matches
+/// the table exactly once a trailing part number is dropped ("Violin I", "Trumpet 2", "2nd Violin"): anything else
+/// keeps the default sound, so an unusual name is never guessed.
+///
+/// A transposing instrument is transposed only when its key is printed ("Clarinet in B♭", "Horn in F"): the
+/// scanner reads the printed notes, and a plain "Clarinet" may be in B♭, A or C.
+enum InstrumentSounds {
+  struct Match: Equatable {
+    var sound: String
+    /// The base name written as the instrument's name ("Violin" for "Violin I").
+    var name: String
+    /// Written to sounding pitch: (diatonic steps, semitones).
+    var transpose: (diatonic: Int, chromatic: Int)?
+
+    static func == (a: Match, b: Match) -> Bool {
+      a.sound == b.sound && a.name == b.name && a.transpose?.diatonic == b.transpose?.diatonic
+        && a.transpose?.chromatic == b.transpose?.chromatic
+    }
+  }
+
+  private static let names: [String: String] = [
+    // strings
+    "violin": "strings.violin", "vln": "strings.violin", "vn": "strings.violin", "vl": "strings.violin",
+    "viola": "strings.viola", "vla": "strings.viola", "va": "strings.viola",
+    "violoncello": "strings.cello", "cello": "strings.cello", "vc": "strings.cello", "vlc": "strings.cello",
+    "contrabass": "strings.contrabass", "double bass": "strings.contrabass", "string bass": "strings.contrabass",
+    "cb": "strings.contrabass", "db": "strings.contrabass",
+    // woodwinds
+    "flute": "wind.flutes.flute", "fl": "wind.flutes.flute", "piccolo": "wind.flutes.flute.piccolo",
+    "picc": "wind.flutes.flute.piccolo", "alto flute": "wind.flutes.flute.alto",
+    "oboe": "wind.reed.oboe", "ob": "wind.reed.oboe",
+    "english horn": "wind.reed.english-horn", "cor anglais": "wind.reed.english-horn",
+    "clarinet": "wind.reed.clarinet", "cl": "wind.reed.clarinet", "bass clarinet": "wind.reed.clarinet.bass",
+    "bassoon": "wind.reed.bassoon", "bsn": "wind.reed.bassoon", "contrabassoon": "wind.reed.contrabassoon",
+    "saxophone": "wind.reed.saxophone", "sax": "wind.reed.saxophone",
+    "soprano saxophone": "wind.reed.saxophone.soprano", "soprano sax": "wind.reed.saxophone.soprano",
+    "alto saxophone": "wind.reed.saxophone.alto", "alto sax": "wind.reed.saxophone.alto",
+    "a sax": "wind.reed.saxophone.alto",
+    "tenor saxophone": "wind.reed.saxophone.tenor", "tenor sax": "wind.reed.saxophone.tenor",
+    "t sax": "wind.reed.saxophone.tenor",
+    "baritone saxophone": "wind.reed.saxophone.baritone", "baritone sax": "wind.reed.saxophone.baritone",
+    "bari sax": "wind.reed.saxophone.baritone",
+    // brass
+    "horn": "brass.french-horn", "french horn": "brass.french-horn", "hn": "brass.french-horn",
+    "trumpet": "brass.trumpet", "tpt": "brass.trumpet", "cornet": "brass.cornet", "flugelhorn": "brass.flugelhorn",
+    "trombone": "brass.trombone", "tbn": "brass.trombone", "bass trombone": "brass.trombone.bass",
+    "tuba": "brass.tuba", "tba": "brass.tuba", "euphonium": "brass.euphonium",
+    // voices
+    "soprano": "voice.soprano", "mezzo-soprano": "voice.mezzo-soprano", "mezzo soprano": "voice.mezzo-soprano",
+    "alto": "voice.alto", "contralto": "voice.alto", "tenor": "voice.tenor", "baritone": "voice.baritone",
+    "voice": "voice.vocals", "vocals": "voice.vocals", "vocal": "voice.vocals",
+    // keyboards
+    "piano": "keyboard.piano", "pianoforte": "keyboard.piano", "pno": "keyboard.piano", "pf": "keyboard.piano",
+    "organ": "keyboard.organ", "org": "keyboard.organ", "harpsichord": "keyboard.harpsichord",
+    "celesta": "keyboard.celesta",
+    // plucked
+    "guitar": "pluck.guitar", "gtr": "pluck.guitar", "acoustic guitar": "pluck.guitar.acoustic",
+    "electric guitar": "pluck.guitar.electric", "bass guitar": "pluck.bass.electric",
+    "electric bass": "pluck.bass.electric", "harp": "pluck.harp", "banjo": "pluck.banjo",
+    "mandolin": "pluck.mandolin", "ukulele": "pluck.ukulele",
+    // pitched percussion
+    "vibraphone": "mallet.vibraphone", "marimba": "mallet.marimba", "xylophone": "mallet.xylophone",
+    "glockenspiel": "mallet.glockenspiel", "timpani": "drum.timpani",
+  ]
+
+  /// Instruments in a printed key: name with its key → (sound, diatonic, chromatic), written to sounding pitch.
+  private static let keyed: [String: (String, Int, Int)] = [
+    "clarinet in bb": ("wind.reed.clarinet.bflat", -1, -2), "clarinet in a": ("wind.reed.clarinet.a", -2, -3),
+    "clarinet in eb": ("wind.reed.clarinet.eflat", 2, 3), "bass clarinet in bb": ("wind.reed.clarinet.bass", -8, -14),
+    "bb clarinet": ("wind.reed.clarinet.bflat", -1, -2), "a clarinet": ("wind.reed.clarinet.a", -2, -3),
+    "eb clarinet": ("wind.reed.clarinet.eflat", 2, 3),
+    "trumpet in bb": ("brass.trumpet.bflat", -1, -2), "bb trumpet": ("brass.trumpet.bflat", -1, -2),
+    "trumpet in c": ("brass.trumpet.c", 0, 0), "c trumpet": ("brass.trumpet.c", 0, 0),
+    "cornet in bb": ("brass.cornet", -1, -2), "flugelhorn in bb": ("brass.flugelhorn", -1, -2),
+    "horn in f": ("brass.french-horn", -4, -7), "f horn": ("brass.french-horn", -4, -7),
+    "horn in eb": ("brass.french-horn", -5, -9),
+    "soprano saxophone in bb": ("wind.reed.saxophone.soprano", -1, -2),
+    "alto saxophone in eb": ("wind.reed.saxophone.alto", -5, -9), "eb alto saxophone": ("wind.reed.saxophone.alto", -5, -9),
+    "tenor saxophone in bb": ("wind.reed.saxophone.tenor", -8, -14), "bb tenor saxophone": ("wind.reed.saxophone.tenor", -8, -14),
+    "baritone saxophone in eb": ("wind.reed.saxophone.baritone", -12, -21),
+  ]
+
+  /// Lower case, flats and sharps as "b" and "#", no dots, single spaces: "Clarinet in B♭" → "clarinet in bb".
+  static func key(_ name: String) -> String {
+    name.lowercased().replacingOccurrences(of: "♭", with: "b").replacingOccurrences(of: "♯", with: "#")
+      .replacingOccurrences(of: ".", with: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+  }
+
+  /// The name without the part's number: a trailing Roman numeral or number ("Violin II", "Horn 3") or a
+  /// leading ordinal ("2nd Violin"). Left alone when nothing would be left.
+  static func base(_ name: String) -> String {
+    var words = name.split(whereSeparator: \.isWhitespace).map(String.init)
+    let trailing: Set<String> = ["i", "ii", "iii", "iv", "v", "vi", "1", "2", "3", "4", "5", "6"]
+    let leading: Set<String> = ["1st", "2nd", "3rd", "4th", "first", "second", "third", "fourth"]
+    if words.count > 1, let w = words.last, trailing.contains(w.lowercased().trimmingCharacters(in: .punctuationCharacters)) {
+      words.removeLast()
+    }
+    if words.count > 1, leading.contains(words[0].lowercased()) { words.removeFirst() }
+    return words.joined(separator: " ")
+  }
+
+  /// The instrument for a part from its printed long name, else its short name. "Bass" is a voice beside other
+  /// voices and a double bass beside other strings, otherwise unknown.
+  static func match(long: String, short: String, others: [String] = []) -> Match? {
+    for printed in [long, short] where !printed.trimmingCharacters(in: .whitespaces).isEmpty {
+      let name = base(printed)
+      let k = key(name)
+      if let (sound, d, c) = keyed[k] { return Match(sound: sound, name: name, transpose: (d, c)) }
+      if let sound = names[k] { return Match(sound: sound, name: name, transpose: nil) }
+      if k == "bass" || k == "b" {
+        let kinds = others.compactMap { names[key(base($0))] }
+        if kinds.contains(where: { $0.hasPrefix("voice.") }) { return Match(sound: "voice.bass", name: name, transpose: nil) }
+        if kinds.contains(where: { $0.hasPrefix("strings.") }) {
+          return Match(sound: "strings.contrabass", name: name, transpose: nil)
+        }
+      }
+    }
+    return nil
+  }
+}
