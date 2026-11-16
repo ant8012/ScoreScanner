@@ -412,6 +412,23 @@ extension Copista {
       }
     }
 
+    /// The two neighbouring staves (as positions in `ks`) a brace pairs. When `covered` finds no pair, the pair
+    /// whose combined height overlaps the brace most, by at least half of their union: on a curled photo the staves
+    /// bend down (or up) towards the binding, where the brace is, so the brace sits a few staff spaces off the
+    /// staves' straight-line position although it is as tall as the pair.
+    static func bracePair(_ L: Layout, _ box: Box, _ ks: [Int]) -> [Int]? {
+      let cov = covered(L, box, ks)
+      if cov.count == 2 && cov[1] == cov[0] + 1 { return cov }
+      guard cov.count < 2, ks.count >= 2 else { return nil }
+      var best: [Int]?, bestIoU = 0.5
+      for p in 0..<(ks.count - 1) {
+        let a = L.staves[ks[p]], b = L.staves[ks[p + 1]]
+        let inter = min(box.3, b.y1) - max(box.1, a.y0), union = max(box.3, b.y1) - min(box.1, a.y0)
+        if union > 0, inter / union >= bestIoU { bestIoU = inter / union; best = [p, p + 1] }
+      }
+      return best
+    }
+
     static func fullest(_ L: Layout) -> System {
       var t = L.systems[0]
       for sy in L.systems.dropFirst() where sy.staves.count > t.staves.count { t = sy }
@@ -425,11 +442,15 @@ extension Copista {
       let K = tmpl.staves.count
       var taken = [Bool](repeating: false, count: K)
       var plans: [[Int]] = []
-      for (si, s) in L.syms.enumerated() where isReal(rd, si) && cls(rd, si) == "grpSym_brace" {
-        let cov = covered(L, s.box, tmpl.staves)
-        if cov.count == 2 && cov[1] == cov[0] + 1 && !cov.contains(where: { taken[$0] }) {
-          for p in cov { taken[p] = true }
-          plans.append(cov)
+      let braces = L.syms.indices.filter { isReal(rd, $0) && cls(rd, $0) == "grpSym_brace" }.map { L.syms[$0] }
+      // the pairs braced in the template system, then those braced in any other system laid out like it (a brace
+      // can be missed or sit off its staves on one curled system of a photo while the page's others show it)
+      for sy in [tmpl] + L.systems.filter({ $0 !== tmpl && $0.staves.count == K }) {
+        for s in braces {
+          if let cov = bracePair(L, s.box, sy.staves), !cov.contains(where: { taken[$0] }) {
+            for p in cov { taken[p] = true }
+            plans.append(cov)
+          }
         }
       }
       for p in 0..<K where !taken[p] { plans.append([p]) }
@@ -439,8 +460,7 @@ extension Copista {
     static func bracedPairs(_ L: Layout, _ sy: System, _ braces: [Sym]) -> Set<Int> {
       var out = Set<Int>()
       for s in braces {
-        let cov = covered(L, s.box, sy.staves)
-        if cov.count == 2 && cov[1] == cov[0] + 1 { out.insert(cov[0]) }
+        if let cov = bracePair(L, s.box, sy.staves) { out.insert(cov[0]) }
       }
       return out
     }

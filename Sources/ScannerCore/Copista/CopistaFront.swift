@@ -367,16 +367,20 @@ extension Copista {
 
     /// Per row from `y0` to `y1`, the end of the run starting at the sheet's left edge (or 0 when there is none) of
     /// pixels that pass `on`: the page edge or the shadow beside it. The run may start past a bright sliver at the
-    /// edge, but within `away` columns of it; no system starts that close to the edge of a page.
+    /// edge, but within two staff spaces (`away` is one) of it; no system starts that close to the edge of a page.
+    /// Gaps of up to a quarter staff space inside the run (a faint, speckled strip in a photo) do not end it.
     static func edgeRuns(rows y0: Int, _ y1: Int, sheetLeft: Int, width W: Int, away: Int,
                          _ on: (Int, Int) -> Bool) -> [Int] {
-      let edge = max(0, min(W, sheetLeft))
+      let edge = max(0, min(W, sheetLeft)), start = min(W, edge + 2 * away), gap = max(2, away / 4)
       return (y0..<max(y0, y1)).map { y -> Int in
         var x = edge
-        while x < min(W, edge + away) && !on(y, x) { x += 1 }
-        if x >= min(W, edge + away) { return 0 }
-        while x < W && on(y, x) { x += 1 }
-        return x
+        while x < start && !on(y, x) { x += 1 }
+        if x >= start { return 0 }
+        var end = x
+        while x < W {
+          if on(y, x) { end = x + 1; x += 1 } else if x - end < gap { x += 1 } else { break }
+        }
+        return end
       }
     }
 
