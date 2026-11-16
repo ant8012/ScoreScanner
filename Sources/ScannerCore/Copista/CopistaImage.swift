@@ -365,7 +365,20 @@ extension Copista {
 
   /// The page with a scan's frame painted the paper's tone (front.unframe).
   static func unframe(_ v: [Float], width: Int, height: Int, integral: Bool) -> [Float] {
-    let (x0, y0, x1, y1) = frame(dark(v, width: width, height: height))
+    unframed(v, width: width, height: height, integral: integral).pixels
+  }
+
+  /// `unframe`, and the sheet's edges it kept inside (x0, y0, x1, y1).
+  static func unframed(_ v: [Float], width: Int, height: Int, integral: Bool)
+    -> (pixels: [Float], frame: (Int, Int, Int, Int))
+  {
+    let f = frame(dark(v, width: width, height: height))
+    return (paintFrame(v, width: width, height: height, integral: integral, frame: f), f)
+  }
+
+  private static func paintFrame(_ v: [Float], width: Int, height: Int, integral: Bool,
+                                 frame: (Int, Int, Int, Int)) -> [Float] {
+    let (x0, y0, x1, y1) = frame
     if (x0, y0, x1, y1) == (0, 0, width, height) || x1 <= x0 || y1 <= y0 { return v }
     var inner: [Float] = []
     inner.reserveCapacity((x1 - x0) * (y1 - y0))

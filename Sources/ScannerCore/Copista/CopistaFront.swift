@@ -80,6 +80,8 @@ extension Copista {
   struct PageInk {
     let gray: Gray
     let mask: Mask
+    /// Where the sheet starts: left of it `unframe` painted the page the paper's tone (0 when it kept everything).
+    var sheetLeft = 0
   }
 
   enum Front {
@@ -363,12 +365,43 @@ extension Copista {
       return (Int(min(pageLeft, a.x0, b.x0) - 3 * sp), Int(min(start(a), start(b)) + sp))
     }
 
-    static func inkLinks(_ mask: Mask, _ syms: [Sym], _ a: Staff, _ b: Staff, pageLeft: Double) -> (Double, Double) {
+    /// Per row from `y0` to `y1`, the end of the run starting at the sheet's left edge (or 0 when there is none) of
+    /// pixels that pass `on`: the page edge or the shadow beside it. The run may start past a bright sliver at the
+    /// edge, but within `away` columns of it; no system starts that close to the edge of a page.
+    static func edgeRuns(rows y0: Int, _ y1: Int, sheetLeft: Int, width W: Int, away: Int,
+                         _ on: (Int, Int) -> Bool) -> [Int] {
+      let edge = max(0, min(W, sheetLeft))
+      return (y0..<max(y0, y1)).map { y -> Int in
+        var x = edge
+        while x < min(W, edge + away) && !on(y, x) { x += 1 }
+        if x >= min(W, edge + away) { return 0 }
+        while x < W && on(y, x) { x += 1 }
+        return x
+      }
+    }
+
+    static func inkLinks(_ mask: Mask, _ syms: [Sym], _ a: Staff, _ b: Staff, pageLeft: Double,
+                         sheetLeft: Int = 0) -> (Double, Double) {
       let sp = (a.sp + b.sp) / 2
       let y0 = a.y1 + 1, y1 = b.y0 - 1
       let (lo, hi) = leftSpan(a, b, pageLeft: pageLeft)
+      // ink joined to the sheet's left edge (a page edge or binding shadow in a photo) links nothing: rows count
+      // only ink a staff space beyond it
+      let ra = max(0, pyRound(y0)), rb = min(mask.height, pyRound(y1))
+      let away = max(3, pyRound(sp))
+      let edge = edgeRuns(rows: ra, rb, sheetLeft: sheetLeft, width: mask.width, away: away) { mask[$0, $1] }
+      func run(_ x: Int) -> Double {
+        if !edge.contains(where: { $0 > 0 }) { return inkRun(mask, x: Double(x), y0: y0, y1: y1) }
+        if rb - ra < 2 { return 1 }
+        var hit = 0
+        for y in ra..<rb {
+          let from = max(0, x - 2, edge[y - ra] > 0 ? edge[y - ra] + away : 0), to = min(mask.width, x + 3)
+          if from < to, (from..<to).contains(where: { mask[y, $0] }) { hit += 1 }
+        }
+        return Double(hit) / Double(rb - ra)
+      }
       var left = 0.0
-      for x in stride(from: max(0, lo), through: hi, by: 2) { left = max(left, inkRun(mask, x: Double(x), y0: y0, y1: y1)) }
+      for x in stride(from: max(0, lo), through: hi, by: 2) { left = max(left, run(x)) }
       let lines = syms.filter { s in
         s.fam == "barLine" && s.p >= 0.5 && s.staff < 0 && a.y0 - sp <= s.cy && s.cy <= a.y1 + sp &&
           max(a.x0, b.x0) <= s.cx && s.cx <= min(a.x1, b.x1)
@@ -378,20 +411,30 @@ extension Copista {
       return (left, bars)
     }
 
-    static func paleLine(_ levels: Gray, paper: Double, dark: Double, _ a: Staff, _ b: Staff, pageLeft: Double) -> Double {
+    /// Pale pixels joined to the image's left border are left out: they are the edge of the page or the shadow
+    /// beside it (a phone photo of a book keeps a grey strip down its side, drifting as the page curls), while a
+    /// faint opening line has paper between it and the border.
+    static func paleLine(_ levels: Gray, paper: Double, dark: Double, _ a: Staff, _ b: Staff, pageLeft: Double,
+                         sheetLeft: Int = 0) -> Double {
       let H = levels.height, W = levels.width
       let ya = max(0, pyRound(a.y1 + 1)), yb = min(H, pyRound(b.y0 - 1))
       if yb - ya < 2 { return 0 }
       let (lo, hi) = leftSpan(a, b, pageLeft: pageLeft, lines: true)
       let cut = paper - pale * max(1.0, paper - dark)
+      // per row, where the pale run at the sheet's left edge ends (the image's border, or where unframe painted out
+      // the frame)
+      let away = max(3, pyRound((a.sp + b.sp) / 2))
+      let border = edgeRuns(rows: ya, yb, sheetLeft: sheetLeft, width: W, away: away) { Double(levels[$0, $1]) < cut }
       func run(_ c0: Int, _ c1: Int) -> Double {      // share of rows with a pale pixel in columns c0..<c1
         var hit = 0
         for y in ya..<yb {
-          for x in max(0, c0)..<min(W, c1) where Double(levels[y, x]) < cut { hit += 1; break }
+          // a pixel within a staff space of the edge's pale run belongs to it (its fading side, a broken strip)
+          let lo = max(border[y - ya] > 0 ? border[y - ya] + away : 0, c0, 0), hi = min(W, c1)
+          if lo >= hi { continue }
+          for x in lo..<hi where Double(levels[y, x]) < cut { hit += 1; break }
         }
         return Double(hit) / Double(yb - ya)
       }
-      let away = max(3, pyRound((a.sp + b.sp) / 2))
       var best = 0.0
       let from = max(away + 1, lo), to = min(W - away - 1, hi)
       if from <= to {
@@ -429,7 +472,7 @@ extension Copista {
         var tone: (Double, Double)?
         for k in 1..<staves.count {
           let a = staves[k - 1], b = staves[k]
-          let (left, bars) = inkLinks(page.mask, syms, a, b, pageLeft: pageLeft)
+          let (left, bars) = inkLinks(page.mask, syms, a, b, pageLeft: pageLeft, sheetLeft: page.sheetLeft)
           var line = 0.0
           if left < inkLink && bars < 0.5 {
             line = openingLine(page.mask, a, b, pageLeft: pageLeft)
@@ -438,7 +481,8 @@ extension Copista {
                 let (h, n) = histogram(page.gray)
                 tone = (percentile(h, count: n, 50), percentile(h, count: n, 1))
               }
-              line = max(line, paleLine(page.gray, paper: tone!.0, dark: tone!.1, a, b, pageLeft: pageLeft))
+              line = max(line, paleLine(page.gray, paper: tone!.0, dark: tone!.1, a, b, pageLeft: pageLeft,
+                                        sheetLeft: page.sheetLeft))
             }
           }
           if left >= inkLink || line >= inkLink || bars >= 0.5 {
@@ -588,7 +632,8 @@ extension Copista {
     /// of a book page or a binding shadow on a photocopy, often slanted. A bracket or a system's opening line
     /// stays with the staves it joins, so a stroke that reaches into the empty margin is neither. Left in,
     /// one of these reads as a bracket and as an opening line, and joins every system it passes into one.
-    static func edgeRules(_ mask: Mask, _ staves: [Staff]) -> [EdgeRule] {
+    /// `sheet`: the rows `unframe` kept (top..<bottom); a stroke cut off at either end ran on past it.
+    static func edgeRules(_ mask: Mask, _ staves: [Staff], sheet: Range<Int>? = nil) -> [EdgeRule] {
       guard staves.count >= 2 else { return [] }
       let sp = median(index: staves.map(\.sp))
       let left = min(mask.width, Int(staves.map(\.x0).min()!))
@@ -617,8 +662,10 @@ extension Copista {
           let ys = rows.keys, a = Double(ys.min()!), b = Double(ys.max()!)
           let wide = Double(rows.values.map { $0.1 }.max()! - rows.values.map { $0.0 }.min()! + 1)
           let spans = staves.filter { a <= $0.y0 && $0.y1 <= b }.count
+          let kept = sheet ?? 0..<H
+          let offSheet = a <= Double(kept.lowerBound + 1) || b >= Double(kept.upperBound - 2)
           if spans >= 2 && (b - a) >= edgeRuleAspect * min(wide, Double(left)) / 2 &&
-            (a < top - edgeRuleReachSp * sp || b > bottom + edgeRuleReachSp * sp) {
+            (a < top - edgeRuleReachSp * sp || b > bottom + edgeRuleReachSp * sp || offSheet) {
             rules.append(EdgeRule(rows: rows))
           }
         }
@@ -853,16 +900,18 @@ extension Copista {
     /// front.build: ``cuts`` are bar lines to add per system (its top staff), from a first reading (revise).
     static func build(_ dets: [Det], width: Double, height: Double, page: Gray?, meta: Meta, classId: [String: Int],
                       cuts: [Int: [Double]] = [:]) -> Layout {
-      var gray: Gray?
+      var gray: Gray?, sheetLeft = 0, sheetRows: Range<Int>?
       if let page {
-        let v = unframe(page.pixels.map(Float.init), width: page.width, height: page.height, integral: true)
-        gray = Gray(width: page.width, height: page.height, pixels: v.map { UInt8($0) })
+        let u = unframed(page.pixels.map(Float.init), width: page.width, height: page.height, integral: true)
+        gray = Gray(width: page.width, height: page.height, pixels: u.pixels.map { UInt8($0) })
+        let (x0, y0, x1, y1) = u.frame
+        if x0 < x1 && y0 < y1 { sheetLeft = x0; sheetRows = y0..<y1 }
       }
       var syms = merge(dets, classId: classId, classes: meta.classes)
       var staves = gray.map { inkStaves($0, syms) } ?? nil
       var mask = gray.map { g in inkMask(g.pixels.map(Float.init), width: g.width, height: g.height, integral: true) }
       if var g = gray, var m = mask, let st = staves {
-        let rules = edgeRules(m, st)
+        let rules = edgeRules(m, st, sheet: sheetRows)
         if !rules.isEmpty {
           // Painted out and not taken as brackets, then the staves are found again on the cleaned page.
           for r in rules {
@@ -879,7 +928,7 @@ extension Copista {
           staves = inkStaves(g, syms)
         }
       }
-      let pageInk = gray.map { g in PageInk(gray: g, mask: mask!) }
+      let pageInk = gray.map { g in PageInk(gray: g, mask: mask!, sheetLeft: sheetLeft) }
       let inkPath = !(staves ?? []).isEmpty
       let systems: [System]
       if let st = staves, !st.isEmpty {
