@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 extension Copista.Writer {
   /// The chord finder's words without the tuplet numbers it took for text: a triplet's "3" over a beam reads as a

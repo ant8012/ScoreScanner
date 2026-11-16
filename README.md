@@ -15,7 +15,7 @@ The repository holds two things:
 
 | Path | What it is |
 | --- | --- |
-| `Package.swift`, `Sources/`, `Tests/` | **ScannerCore**, the reader, as a Swift package. ScoreScanner and Aria both depend on it. |
+| `Package.swift`, `Sources/`, `Tests/` | **ScannerCore**, the reader, as a Swift package. ScoreScanner and Aria both depend on it. It also builds for Android (Aria's Android app, through Skip): see "Android" below. |
 | `App/`, `ScoreScanner.xcodeproj` | **ScoreScanner**, the standalone app: library, scan screens, Verovio player, settings. |
 
 ## Using the reader
@@ -92,3 +92,20 @@ Aria's project navigator (a local override), and remove it before committing Ari
   Re-export the models with `tools/copista_export_onnx.py` and check them with `tools/copista_check_onnx.py`.
 - ONNX Runtime 1.27.0: MIT, `Vendor/onnxruntime/` (pinned source revision and file checksums).
 - musicxml-player (app only, not part of ScannerCore): GPL-3.0, fetched by `tools/prepare_player.py`.
+
+## Android
+
+ScannerCore builds for Android with the Swift Android SDK (Skip), for Aria's Android app. What differs there:
+
+- **ONNX Runtime:** `OnnxRuntimeAndroid` gives the same `ORTSession`/`ORTValue` classes as the Objective-C bindings,
+  over the C API (`COnnxRuntimeAndroid`), and loads `libonnxruntime.so` at run time. The app packages it from
+  `com.microsoft.onnxruntime:onnxruntime-android:1.27.0`.
+- **Pages:** there is no Core Graphics or ImageIO, so the app decodes photos and draws PDF pages itself and passes
+  each as a binary PPM or PGM: `ScoreReader.read(pageCount:...page:)` asks for one page at a time. PDFs and other
+  image formats are read only on Apple platforms.
+- **Models:** an Android app gets no resources of this package, so the app ships the `Models` folder itself and
+  passes its path as `models:`. `Scanner.bundledModels` points nowhere on Android.
+- Apple's model routes (`.appleModel`) are not available.
+
+Check an Android build: `skip android build --arch aarch64 --product ScannerCore` from the repository.
+

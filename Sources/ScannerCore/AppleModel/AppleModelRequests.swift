@@ -1,6 +1,11 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
-import Foundation
 import ImageIO
+#endif
+import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 #if compiler(>=6.4) && canImport(FoundationModels) && os(iOS)
   import FoundationModels
@@ -174,6 +179,7 @@ enum AppleModelGates {
   }
 #endif
 
+#if canImport(CoreGraphics)
 /// A grey crop as an image for the model, enlarged so its short side is about `targetShortSide`: no detail is
 /// added, the existing pixels are just given more room.
 enum CropImage {
@@ -209,6 +215,7 @@ enum CropImage {
     return data as Data
   }
 }
+#endif
 
 #if compiler(>=6.4) && canImport(FoundationModels) && os(iOS)
   @available(iOS 27.0, *)

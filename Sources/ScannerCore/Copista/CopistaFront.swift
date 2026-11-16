@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 // copisteria's front end (front.py, links.py): detector boxes -> symbols -> staves, bars and systems. Geometry only.
 

@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 #if compiler(>=6.4) && canImport(FoundationModels) && os(iOS)
@@ -83,6 +85,7 @@ enum AppleScoreTextReader {
     #endif
   }
 
+  #if canImport(CoreGraphics)
   static func image(from crop: ScoreTextImageCrop) throws -> CGImage {
     guard crop.width > 0, crop.height > 0,
       crop.pixels.count == crop.width * crop.height,
@@ -95,6 +98,7 @@ enum AppleScoreTextReader {
     else { throw AppleChordReaderError.invalidCrop }
     return image
   }
+  #endif
 }
 
 #if compiler(>=6.4) && canImport(FoundationModels) && os(iOS)

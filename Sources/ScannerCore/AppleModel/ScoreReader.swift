@@ -128,6 +128,7 @@ public enum ScoreReader {
     return finished(score: score, metadata: metadata, chords: page.chords, text: page.text, crops: page.cropImages)
   }
 
+  #if canImport(CoreGraphics)
   /// Reads every page of a PDF and joins them into one score, carrying the meter from page to page.
   /// `title`: the title written when none is read from the first page.
   public static func read(
@@ -135,10 +136,36 @@ public enum ScoreReader {
     options: ScoreReadOptions = ScoreReadOptions(),
     progress: @escaping @Sendable (String) -> Void = { _ in }
   ) async throws -> ScoreReading {
+    let count = try PDFScanner.pageCount(data: data)
+    return try await readPages(count: count, title: title, models: models, options: options, progress: progress) {
+      try PDFScanner.renderPage(data: data, pageIndex: $0)
+    }
+  }
+  #endif
+
+  /// Reads `pageCount` page images in order and joins them into one score, carrying the meter from page to page, as
+  /// `read(pdf:)` does. `page` makes the zero-based page's image when its turn comes, so only a page or two is held
+  /// at once: Android's app draws a PDF's pages this way, having no Core Graphics. Each image is a JPEG, PNG or HEIC,
+  /// or a binary PGM or PPM. `title`: the title written when none is read from the first page.
+  public static func read(
+    pageCount: Int, title: String = "", models: URL = Scanner.bundledModels,
+    options: ScoreReadOptions = ScoreReadOptions(),
+    progress: @escaping @Sendable (String) -> Void = { _ in },
+    page: @escaping @Sendable (Int) throws -> Data
+  ) async throws -> ScoreReading {
+    guard pageCount > 0 else { throw ScannerError.invalid("There are no pages to read") }
+    return try await readPages(count: pageCount, title: title, models: models, options: options, progress: progress,
+                               page: page)
+  }
+
+  /// `count` pages, each image made by `page` when its turn comes, read and joined into one score.
+  private static func readPages(
+    count: Int, title: String, models: URL, options: ScoreReadOptions,
+    progress: @escaping @Sendable (String) -> Void, page render: @escaping @Sendable (Int) throws -> Data
+  ) async throws -> ScoreReading {
     await configure(options)
     let local = try localModel(models: models, options: options)
     let localText = try localTextModel(models: models, options: options)
-    let count = try PDFScanner.pageCount(data: data)
     var pages: [ScanResult] = []
     var chordAnalyses: [AppleChordAnalysis] = []
     var textAnalyses: [AppleScoreTextAnalysis] = []
@@ -151,7 +178,7 @@ public enum ScoreReader {
     func scanPage(_ index: Int, carriedMeter: String?) -> Task<ScanResult, Error> {
       let prefix = "Page \(index + 1) of \(count): "
       return Task.detached(priority: .userInitiated) {
-        let image = try PDFScanner.renderPage(data: data, pageIndex: index)
+        let image = try render(index)
         return try Scanner.scan(image: image, models: models, carriedMeter: carriedMeter) { progress(prefix + $0) }
       }
     }

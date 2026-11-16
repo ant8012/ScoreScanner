@@ -1,5 +1,12 @@
 import Foundation
+#if canImport(Android)
+import Android
+#endif
+#if canImport(OnnxRuntimeBindings)
 import OnnxRuntimeBindings
+#else
+import OnnxRuntimeAndroid
+#endif
 
 // copisteria's reading (features.py, read.py, revise.py, vocab.py): every symbol's final reading from the evidence
 // model, run over each system with its neighbours.

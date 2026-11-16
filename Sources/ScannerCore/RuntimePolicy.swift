@@ -1,4 +1,8 @@
+#if canImport(OnnxRuntimeBindings)
 import OnnxRuntimeBindings
+#else
+import OnnxRuntimeAndroid
+#endif
 
 enum RuntimePolicy {
     static let name = "CPU, 2 threads, KleidiAI disabled"

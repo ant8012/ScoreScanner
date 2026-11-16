@@ -1,5 +1,12 @@
 import Foundation
+#if canImport(Android)
+import Android
+#endif
+#if canImport(OnnxRuntimeBindings)
 import OnnxRuntimeBindings
+#else
+import OnnxRuntimeAndroid
+#endif
 
 /// Reads chord symbols on this device, with no network: the chord finder's word boxes (`ChordFinder`), each cut
 /// from the page and read by a PP-OCRv6 small text recogniser fine-tuned on chord symbols (round 3 in

@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 #if compiler(>=6.4) && canImport(FoundationModels) && os(iOS)
@@ -107,6 +109,9 @@ enum AppleChordReader {
   /// The measure crop as sent to the reader, named by its bar, so the same
   /// image can be given to another model for comparison.
   static func exported(_ crop: ChordImageCrop, index: Int, page: Int) -> (name: String, png: Data)? {
+    #if !canImport(CoreGraphics)
+    return nil
+    #else
     guard
       let image = try? CropImage.enlarged(
         pixels: crop.pixels, width: crop.width, height: crop.height),
@@ -114,6 +119,8 @@ enum AppleChordReader {
     else { return nil }
     let bar = String(format: "%03d", index)
     return ("p\(page)-crop\(bar)-system\((crop.system ?? 0) + 1)-bar\(crop.bar + 1).png", data)
+
+    #endif
   }
 
   /// Accepted chords per crop index, with names that a bar line cut in two
@@ -207,6 +214,7 @@ enum AppleChordReader {
     #endif
   }
 
+  #if canImport(CoreGraphics)
   fileprivate static func image(from crop: ChordImageCrop) throws -> CGImage {
     guard crop.width > 0, crop.height > 0,
       crop.pixels.count == crop.width * crop.height,
@@ -247,6 +255,7 @@ enum AppleChordReader {
     context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
     return context.makeImage() ?? image
   }
+  #endif
 }
 
 #if compiler(>=6.4) && canImport(FoundationModels) && os(iOS)

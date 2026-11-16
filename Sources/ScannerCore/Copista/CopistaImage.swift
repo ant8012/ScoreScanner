@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 // Image work for the copisteria reader (kobimusic/copisteria, Apache-2.0): a port of its page handling
 // (vision/page/staves.py, the ink parts of front.py) and of Pillow's Lanczos resize, which sets the detector's input.

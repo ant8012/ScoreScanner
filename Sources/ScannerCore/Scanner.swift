@@ -31,8 +31,15 @@ public struct ScanResult: Sendable {
 public enum Scanner {
   /// The copisteria models that ship inside this package.
   public static var bundledModels: URL {
-    Bundle.module.url(forResource: "Models", withExtension: nil)
+    #if os(Android)
+    // An Android app gets no resources of this package (Skip packages only its own modules'), and SwiftPM's
+    // Bundle.module stops the app when its bundle is missing. The app ships the models itself and passes their
+    // folder; this one does not exist, so a reading without it reports the models missing.
+    return URL(fileURLWithPath: "/ScannerCore-models-ship-with-the-app", isDirectory: true)
+    #else
+    return Bundle.module.url(forResource: "Models", withExtension: nil)
       ?? Bundle.module.bundleURL.appendingPathComponent("Models")
+    #endif
   }
 
   /// Whether the bundle carries the copisteria models.

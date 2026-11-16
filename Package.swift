@@ -7,7 +7,7 @@ import PackageDescription
 // Private Cloud Compute, when asked). The ScoreScanner app in this repository and Aria both use it.
 let package = Package(
     name: "ScoreScanner",
-    platforms: [.iOS(.v16), .macOS(.v14)],
+    platforms: [.iOS(.v16), .macOS(.v14)],  // and Android (Skip), for Aria
     products: [
         .library(name: "ScannerCore", targets: ["ScannerCore"])
     ],
@@ -18,10 +18,21 @@ let package = Package(
             url: "https://download.onnxruntime.ai/pod-archive-onnxruntime-c-1.27.0.zip",
             checksum: "8c74edd600eafc3055de9e8f7a9602afee44ed516913cb5e132bca02cc34622c"),
         .target(
-            name: "OnnxRuntimeBindings", dependencies: ["onnxruntime"],
+            name: "OnnxRuntimeBindings",
+            dependencies: [.target(name: "onnxruntime", condition: .when(platforms: [.iOS, .macOS]))],
             cxxSettings: [.define("SPM_BUILD")]),
+        // Android: ONNX Runtime's C API, with libonnxruntime.so loaded at run time from the app (Microsoft's
+        // onnxruntime-android), behind stand-ins for the Objective-C classes. See Sources/OnnxRuntimeAndroid.
         .target(
-            name: "ScannerCore", dependencies: ["OnnxRuntimeBindings"],
+            name: "COnnxRuntimeAndroid",
+            linkerSettings: [.linkedLibrary("dl", .when(platforms: [.android]))]),
+        .target(name: "OnnxRuntimeAndroid", dependencies: ["COnnxRuntimeAndroid"]),
+        .target(
+            name: "ScannerCore",
+            dependencies: [
+                .target(name: "OnnxRuntimeBindings", condition: .when(platforms: [.iOS, .macOS])),
+                .target(name: "OnnxRuntimeAndroid", condition: .when(platforms: [.android])),
+            ],
             resources: [.copy("Resources/Models")]),
         // Command-line reads on the Mac: `swift run -c release ScannerCheck --scan-pdf <pdf> <models> <output>`.
         .executableTarget(name: "ScannerCheck", dependencies: ["ScannerCore"]),

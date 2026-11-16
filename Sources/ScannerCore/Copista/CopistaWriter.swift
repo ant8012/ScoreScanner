@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 // copisteria's writer (write.py): a page's reading -> MusicXML. Transcription only: every decision was the model's.
 // Without OCR text boxes (the app reads none yet): no part names from labels, words or multi-rest counts.
@@ -585,8 +588,8 @@ extension Copista {
       let L = rd.layout
       let st = L.staves[staff], sp = st.sp
       let syms = Front.stableSorted(L.syms.filter { $0.staff == staff && $0.bar == bar && isReal(rd, $0.i) && $0.fam != "measure" }) { $0.cx < $1.cx }
-      let clefChanges = syms.filter { family(cls(rd, $0.i)) == "clef" }.map { ($0.cx, seenClef(rd, $0)) }
-        .sorted { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }
+      let clefSyms = syms.filter { family(cls(rd, $0.i)) == "clef" }
+      let clefChanges = clefSyms.map { ($0.cx, seenClef(rd, $0)) }.sorted { a, b in a.0 != b.0 ? a.0 < b.0 : a.1 < b.1 }
       let notesX = syms.filter { ["note", "rest"].contains(family(cls(rd, $0.i))) }.map(\.cx)
       let firstX = notesX.min() ?? .infinity
       let midClefs = clefChanges.filter { $0.0 > firstX }

@@ -1,5 +1,12 @@
 import Foundation
+#if canImport(Android)
+import Android
+#endif
+#if canImport(OnnxRuntimeBindings)
 import OnnxRuntimeBindings
+#else
+import OnnxRuntimeAndroid
+#endif
 
 // The copista-2m symbol detector (detect.py + detector/small arch9 obj-recall), run as two ONNX stages with the
 // candidate picking between them done here, exactly as PeakRelational.decode_out does it.

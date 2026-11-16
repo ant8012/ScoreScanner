@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 /// Limits how many model requests are in flight at once. Waiting requests are
 /// served by priority, then in the order they arrived.

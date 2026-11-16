@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(OnnxRuntimeBindings)
 import OnnxRuntimeBindings
+#else
+import OnnxRuntimeAndroid
+#endif
 
 // Small helpers for moving data in and out of ONNX Runtime values.
 // Confined to the caller's worker task: ORT objects never cross actor boundaries.

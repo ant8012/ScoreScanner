@@ -1,7 +1,9 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
+#endif
 
 public struct DocumentScanResult: Sendable {
   public let xml: Data
@@ -21,6 +23,21 @@ public struct DocumentScanResult: Sendable {
 }
 
 public enum PDFScanner {
+  /// The width pages are rendered at: about 300 dpi for A4 and letter, the detail of a print scan.
+  public static let renderWidth = 2480
+
+  /// Pages read one by one, joined into one score: each part's measures page after page.
+  public static func combine(pages: [ScanResult], title: String = "", seconds: Double) throws -> DocumentScanResult {
+    let xml = try CopistaMerge.combine(pages.map(\.xml), title: title)
+    return DocumentScanResult(xml: xml, rawXML: xml, seconds: seconds,
+                              staffCount: pages.reduce(0) { $0 + $1.staffs.count }, repairedMeasures: 0,
+                              pageCount: pages.count)
+  }
+}
+
+// Reading PDFs needs Core Graphics. On Android the app draws the pages itself and reads them as images.
+#if canImport(CoreGraphics)
+extension PDFScanner {
   public static func pageCount(data: Data) throws -> Int {
     guard let provider = CGDataProvider(data: data as CFData),
       let document = CGPDFDocument(provider), !document.isEncrypted || document.isUnlocked,
@@ -28,9 +45,6 @@ public enum PDFScanner {
     else { throw ScannerError.invalid("Could not open PDF. Use an unlocked PDF containing sheet music.") }
     return document.numberOfPages
   }
-
-  /// The width pages are rendered at: about 300 dpi for A4 and letter, the detail of a print scan.
-  public static let renderWidth = 2480
 
   /// Renders one zero-based page with the same Core Graphics path used by PDF import.
   public static func renderPage(data: Data, pageIndex: Int, width: Int = renderWidth) throws -> Data {
@@ -41,14 +55,6 @@ public enum PDFScanner {
       let page = document.page(at: pageIndex + 1)
     else { throw ScannerError.invalid("PDF page index \(pageIndex) is out of range") }
     return try render(page, width: width)
-  }
-
-  /// Pages read one by one, joined into one score: each part's measures page after page.
-  public static func combine(pages: [ScanResult], title: String = "", seconds: Double) throws -> DocumentScanResult {
-    let xml = try CopistaMerge.combine(pages.map(\.xml), title: title)
-    return DocumentScanResult(xml: xml, rawXML: xml, seconds: seconds,
-                              staffCount: pages.reduce(0) { $0 + $1.staffs.count }, repairedMeasures: 0,
-                              pageCount: pages.count)
   }
 
   /// Every page of a PDF read and joined, carrying the meter from page to page.
@@ -115,3 +121,4 @@ public enum PDFScanner {
     return output as Data
   }
 }
+#endif
