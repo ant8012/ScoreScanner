@@ -47,6 +47,8 @@ extension Copista {
     var typ = "quarter", dots = 0, voice = 1, chord = false, grace = "none", tup = "none"
     var step = "C", octave = 4, alter = 0
     var tie = false, tieStop = false, unpitched = false
+    /// A rest written invisible (time a tuplet group needs that the reader saw nothing in).
+    var hidden = false
     var marks: [String] = []
     var dur = Q(1)
     var si = -1
@@ -67,7 +69,7 @@ extension Copista {
       e.typ = typ; e.dots = dots; e.voice = voice; e.chord = chord; e.grace = grace; e.tup = tup
       e.step = step; e.octave = octave; e.alter = alter; e.unpitched = unpitched; e.dur = dur; e.si = si
       e.tupletMark = tupletMark; e.accidental = accidental; e.stem = stem; e.arpeggiate = arpeggiate
-      e.onset = onset; e.onsetP = onsetP; e.dist = dist
+      e.onset = onset; e.onsetP = onsetP; e.dist = dist; e.hidden = hidden
       return e
     }
   }
@@ -752,13 +754,14 @@ extension Copista {
           cursor += e.dur
           for m in members[ObjectIdentifier(e)] ?? [] { m.dur = e.dur; m.tup = e.tup; out.append(m) }
         }
+        let grouped = wholeTuplets(&out)
         vs[v] = out
         func close(_ run: [Event]) {
           if run.count > 1 { run[run.count - 1].tupletMark = "stop" } else if let f = run.first { f.tupletMark = "" }
         }
         var run: [Event] = [], nominal = Q.zero, target: Q?
         for e in out where !e.chord && e.grace == "none" {
-          if e.tup == "none" || e.tup == "other" {
+          if grouped.contains(ObjectIdentifier(e)) || e.tup == "none" || e.tup == "other" {
             close(run); run = []; nominal = Q.zero; target = nil
             continue
           }
@@ -775,6 +778,271 @@ extension Copista {
         close(run)
       }
       return vs
+    }
+
+    /// Tuplets a score importer can read. The reader labels each note's tuplet on its own, so a run can come out with
+    /// one note of a sextuplet labelled a triplet (the same length, another label), a note missing (a gap), or a
+    /// stray tuplet value among plain notes. Importers take only whole groups; anything else they mark corrupt and
+    /// stretch the bar, and the music after it drifts. Each run of tuplet notes of one length ratio (with the gaps
+    /// inside it) is made whole, the first of these that works:
+    /// - every stretch between the gaps already fills whole groups under one label: relabelled and bracketed so;
+    /// - the run's notes fill it exactly at their plain values (sixteenths misread as triplets): written plain, in a
+    ///   row from where the run starts;
+    /// - stretch by stretch: one label, cut into whole groups, a short last (or first) group finished with hidden
+    ///   tuplet rests from the gap beside it, so no note moves; or a lone tuplet note that fits as its plain value
+    ///   with the gap after it, written plain.
+    /// Anything else is left as read. Returns the events now in whole, bracketed groups.
+    static func wholeTuplets(_ out: inout [Event]) -> Set<ObjectIdentifier> {
+      final class Unit {
+        let head: Event
+        var lead: [Event], tail: [Event] = []
+        init(_ h: Event, _ l: [Event]) { head = h; lead = l }
+      }
+      enum Item { case unit(Unit), rest(String, Int) }
+      var units: [Unit] = [], lead: [Event] = []
+      for e in out {
+        if e.grace != "none" { lead.append(e); continue }
+        if e.chord, let u = units.last { u.tail.append(e); continue }
+        units.append(Unit(e, lead)); lead = []
+      }
+      func ratio(_ t: String) -> Q? {
+        guard t != "none", t != "other" else { return nil }
+        let p = t.split(separator: "/").compactMap { Int($0) }
+        return p.count == 2 && p[0] > 0 && p[1] > 0 ? Q(p[1], p[0]) : nil
+      }
+      func isTup(_ u: Unit) -> Bool { (u.head.kind == "note" || u.head.kind == "rest") && ratio(u.head.tup) != nil }
+      func isGap(_ u: Unit) -> Bool { u.head.kind == "gap" && Q.zero < u.head.dur }
+      func plain(_ e: Event) -> Q { Vocab.duration(e.typ, e.dots, "none") }
+      func floor(_ q: Q) -> Int { q.n >= 0 ? q.n / q.d : -((-q.n + q.d - 1) / q.d) }
+      // rest values (plain or dotted, down to a 64th) that add up to `q`, longest first
+      let restValues = Vocab.typeQuarters.flatMap { t in [(t.0, 1, t.1 * Q(3, 2)), (t.0, 0, t.1)] }
+        .filter { !($0.2 < Q(1, 16)) }
+      func rests(_ q: Q) -> [(String, Int)]? {
+        var left = q, made: [(String, Int)] = []
+        while Q.zero < left {
+          guard made.count < 4, let v = restValues.first(where: { !(left < $0.2) }) else { return nil }
+          made.append((v.0, v.1)); left -= v.2
+        }
+        return made
+      }
+      // `seg` cut into whole groups of `label` whose notes are `unit` long; nil when a note would cross a group's
+      // end, a group would hold one item or only hidden rests, or the gap beside it lacks the time to finish one
+      func cut(_ seg: [Unit], _ label: String, _ unit: Q, before: Q, after: Q) -> (groups: [[Item]], takeBefore: Q, takeAfter: Q)? {
+        guard let r = ratio(label), let a = Int(label.split(separator: "/")[0]) else { return nil }
+        let G = Q(a) * unit
+        var items: [(Unit?, Q)] = seg.map { $0.head.kind == "gap" ? (nil, $0.head.dur / r) : ($0, plain($0.head)) }
+        let N = items.reduce(Q.zero) { $0 + $1.1 }
+        let whole = Q(floor(N / G)) * G
+        let short = whole == N ? Q.zero : whole + G - N
+        var takeB = Q.zero, takeA = Q.zero
+        if Q.zero < short {
+          if !(after < short * r) { items.append((nil, short)); takeA = short * r }
+          else if !(before < short * r) { items.insert((nil, short), at: 0); takeB = short * r }
+          else { return nil }
+        }
+        var groups: [[Item]] = [], cur: [Item] = [], cum = Q.zero
+        for (u, q) in items {
+          var q = q
+          if let u {
+            let end = Q(floor(cum / G) + 1) * G
+            if end < cum + q { return nil }
+            cur.append(.unit(u)); cum += q
+            if cum == end { groups.append(cur); cur = [] }
+            continue
+          }
+          while Q.zero < q {
+            let end = Q(floor(cum / G) + 1) * G
+            let piece = min(q, end - cum)
+            guard let rs = rests(piece) else { return nil }
+            cur += rs.map { .rest($0.0, $0.1) }
+            cum += piece; q -= piece
+            if cum == end { groups.append(cur); cur = [] }
+          }
+        }
+        guard cur.isEmpty else { return nil }
+        for g in groups {
+          guard g.count > 1, g.contains(where: { if case .unit = $0 { return true } else { return false } }) else { return nil }
+        }
+        return (groups, takeB, takeA)
+      }
+      // the labels to try (most used first) and the note values a group can be counted in (the first note's first)
+      func tryCut(_ seg: [Unit], before: Q, after: Q) -> (groups: [[Item]], label: String, takeBefore: Q, takeAfter: Q)? {
+        let real = seg.filter { $0.head.kind != "gap" }
+        guard let first = real.first else { return nil }
+        var count: [String: Int] = [:], labels: [String] = []
+        for u in real { if count[u.head.tup] == nil { labels.append(u.head.tup) }; count[u.head.tup, default: 0] += 1 }
+        labels = labels.enumerated().sorted { (count[$0.element]!, -$0.offset) > (count[$1.element]!, -$1.offset) }.map(\.element)
+        var values = [Vocab.typeQ[first.head.typ] ?? Q(1)]
+        for v in real.compactMap({ Vocab.typeQ[$0.head.typ] }).sorted(by: >) where !values.contains(v) { values.append(v) }
+        for l in labels {
+          for v in values {
+            if let c = cut(seg, l, v, before: before, after: after) { return (c.groups, l, c.takeBefore, c.takeAfter) }
+          }
+        }
+        return nil
+      }
+      // Keep independent, complete groups as evidence even after this pass rewrites their labels.
+      var wholeRatios = Set<Q>()
+      var stretch: [Unit] = []
+      func rememberStretch() {
+        if let first = stretch.first, let r = ratio(first.head.tup),
+           tryCut(stretch, before: Q.zero, after: Q.zero) != nil { wholeRatios.insert(r) }
+        stretch = []
+      }
+      for u in units {
+        if !isTup(u) || (!stretch.isEmpty && ratio(stretch[0].head.tup) != ratio(u.head.tup)) { rememberStretch() }
+        if isTup(u) { stretch.append(u) }
+      }
+      rememberStretch()
+      // Compare the two readings using both onset and tuplet evidence. Average the log likelihoods:
+      // predictions within one group are correlated. Charge the gapped reading the decoder's existing
+      // gap prior; exact duration alone is not evidence for moving a note or discarding a tuplet.
+      func plainEvidence(_ run: [Unit], at start: Q, ratio r: Q) -> Bool {
+        var at = start, proposed = start, gain = 0.0, count = 0, gaps = 0
+        func onsetLogp(_ e: Event, _ q: Q) -> Double? {
+          let tick = q * Q(48)
+          guard tick.d == 1, tick.n >= 0, let d = e.dist,
+                tick.n / 48 < d.beat.count, tick.n % 48 < d.frac.count else { return nil }
+          return log(max(1e-6, d.beat[tick.n / 48])) + log(max(1e-6, d.frac[tick.n % 48]))
+        }
+        for u in run {
+          let e = u.head
+          defer { at += e.dur }
+          if isGap(u) { gaps += 1; continue }
+          guard let tp = e.dist?.tup, tp.count == Vocab.tuplets.count,
+                let old = onsetLogp(e, at), let new = onsetLogp(e, proposed) else { return false }
+          let p = Vocab.tuplets.enumerated().reduce(0.0) { total, t in
+            total + (ratio(t.element) == r ? tp[t.offset] : 0)
+          }
+          gain += new - old + log(max(1e-6, tp[0])) - log(max(1e-6, p))
+          count += 1; proposed += plain(e)
+        }
+        return count > 0 && gain / Double(count) > Double(gaps) * gapLogp
+      }
+      var grouped = Set<ObjectIdentifier>()
+      func bracket(_ groups: [[Item]], _ label: String, voice: Int) -> [Unit] {
+        var made: [Unit] = []
+        let firstX = groups.lazy.flatMap { $0 }.compactMap { if case .unit(let u) = $0 { return u.head.x } else { return nil } }.first ?? 0
+        var x = firstX - 0.002
+        for g in groups {
+          var heads: [Event] = []
+          for it in g {
+            switch it {
+            case .unit(let u):
+              u.head.tup = label; u.head.dur = Vocab.duration(u.head.typ, u.head.dots, label); x = u.head.x
+              for m in u.tail { m.tup = label; m.dur = u.head.dur }
+              made.append(u); heads.append(u.head)
+            case .rest(let t, let d):
+              let e = Event(x: x + 0.001, kind: "rest")
+              x = e.x
+              e.voice = voice; e.typ = t; e.dots = d; e.tup = label; e.hidden = true
+              e.dur = Vocab.duration(t, d, label)
+              made.append(Unit(e, [])); heads.append(e)
+            }
+          }
+          for h in heads { h.tupletMark = ""; grouped.insert(ObjectIdentifier(h)) }
+          heads[0].tupletMark = "start"; heads[heads.count - 1].tupletMark = "stop"
+        }
+        return made
+      }
+      // written plain, in a row; a stretch left over at the end stays a gap
+      func plainRow(_ seg: [Unit], tailGap: Q, voice: Int) -> [Unit] {
+        var made: [Unit] = []
+        for u in seg where u.head.kind != "gap" {
+          u.head.tup = "none"; u.head.tupletMark = ""; u.head.dur = plain(u.head)
+          for m in u.tail { m.tup = "none"; m.dur = u.head.dur }
+          made.append(u)
+        }
+        if Q.zero < tailGap {
+          let g = Event(x: (made.last?.head.x ?? 0) + 0.001, kind: "gap")
+          g.voice = voice; g.dur = tailGap
+          made.append(Unit(g, []))
+        }
+        return made
+      }
+      let grid = Q(1, 32)
+      var pos: [Q] = [Q.zero]
+      for u in units { pos.append(pos[pos.count - 1] + u.head.dur) }
+      var i = 0
+      while i < units.count {
+        guard isTup(units[i]), let r = ratio(units[i].head.tup) else { i += 1; continue }
+        var last = i, j = i + 1
+        while j < units.count {
+          if isTup(units[j]) && ratio(units[j].head.tup) == r { last = j; j += 1 } else if isGap(units[j]) { j += 1 } else { break }
+        }
+        let voice = units[i].head.voice
+        let before = i > 0 && isGap(units[i - 1]) ? units[i - 1].head : nil
+        let after = last + 1 < units.count && isGap(units[last + 1]) ? units[last + 1].head : nil
+        // the stretches between the gaps inside the run, and those gaps
+        var segs: [[Unit]] = [[]], seps: [Event?] = []
+        for u in units[i...last] {
+          if u.head.kind == "gap" {
+            if segs[segs.count - 1].isEmpty, let g = seps.last, let g { g.dur += u.head.dur; u.head.dur = Q.zero; continue }
+            segs.append([]); seps.append(u.head)
+          } else { segs[segs.count - 1].append(u) }
+        }
+        var made: [[Unit]]? = nil
+        // already whole stretch by stretch
+        let fits = segs.map { tryCut($0, before: Q.zero, after: Q.zero) }
+        if fits.allSatisfy({ $0 != nil }) {
+          made = zip(fits, segs).map { bracket($0.0!.groups, $0.0!.label, voice: voice) }
+        }
+        // A gap can be a missed member of one group, not a boundary between two groups.
+        // Try completing the entire run without moving its recognised notes first.
+        let run = Array(units[i...last])
+        let acrossGap = seps.isEmpty ? nil : (tryCut(run, before: Q.zero, after: Q.zero)
+          ?? tryCut(run, before: before?.dur ?? Q.zero, after: after?.dur ?? Q.zero))
+        if made == nil {
+          let real = run.filter { $0.head.kind != "gap" }
+          let L = pos[last + 1] - pos[i], S = real.reduce(Q.zero) { $0 + plain($1.head) }
+          if S == L && pos[i].isMultiple(of: grid) && pos[last + 1].isMultiple(of: grid)
+            && (seps.isEmpty || (acrossGap?.groups.count == 1 && !wholeRatios.contains(r) && plainEvidence(run, at: pos[i], ratio: r))) {
+            made = [plainRow(run, tailGap: Q.zero, voice: voice)]
+            seps = []
+          } else if let c = acrossGap {
+            before?.dur -= c.takeBefore; after?.dur -= c.takeAfter
+            made = [bracket(c.groups, c.label, voice: voice)]
+            seps = []
+          }
+        }
+        if made == nil {
+          var parts: [[Unit]] = []
+          var at = pos[i]
+          for (k, seg) in segs.enumerated() {
+            let gb = k == 0 ? before : seps[k - 1], ga = k < seps.count ? seps[k] : after
+            let segLen = seg.reduce(Q.zero) { $0 + $1.head.dur }
+            let next = at + segLen + (k < seps.count ? seps[k]!.dur : Q.zero)
+            defer { at = next }
+            if let c = tryCut(seg, before: Q.zero, after: Q.zero) ?? tryCut(seg, before: gb?.dur ?? Q.zero, after: ga?.dur ?? Q.zero) {
+              gb?.dur -= c.takeBefore; ga?.dur -= c.takeAfter
+              parts.append(bracket(c.groups, c.label, voice: voice))
+              continue
+            }
+            if seg.count == 1, let ga, at.isMultiple(of: grid) {
+              let need = plain(seg[0].head) - segLen
+              if !(ga.dur < need), (at + plain(seg[0].head)).isMultiple(of: grid) {
+                ga.dur -= need
+                parts.append(plainRow(seg, tailGap: Q.zero, voice: voice))
+                continue
+              }
+            }
+            parts.append(seg)
+          }
+          made = parts
+        }
+        var region: [Unit] = []
+        for (k, p) in made!.enumerated() {
+          region += p
+          if k < seps.count, let g = seps[k], let u = units[i...last].first(where: { $0.head === g }) { region.append(u) }
+        }
+        units.replaceSubrange(i...last, with: region)
+        pos = [Q.zero]
+        for u in units { pos.append(pos[pos.count - 1] + u.head.dur) }
+        i += region.count
+        if region.isEmpty { i += 1 }
+      }
+      out = units.flatMap { $0.lead + [$0.head] + $0.tail } + lead
+      return grouped
     }
 
     static func decodeRhythm(_ order: [Event], strict: Bool, barLen: Q?) -> Double? {
@@ -1620,7 +1888,8 @@ extension Copista {
     static func noteID(_ si: Int) -> String { "s\(si)" }
 
     static func note(_ meas: XE, _ e: Event, _ dur: Int, _ voice: Int, _ staffNo: Int?, wholeRest: Bool) {
-      let ne = meas.sub("note", nil, e.kind == "note" && e.si >= 0 && !e.copied ? [("id", noteID(e.si))] : [])
+      let ne = meas.sub("note", nil, e.kind == "note" && e.si >= 0 && !e.copied ? [("id", noteID(e.si))]
+                        : e.hidden ? [("print-object", "no")] : [])
       if e.grace != "none" { ne.sub("grace", nil, e.grace == "unacc" ? [("slash", "yes")] : []) }
       if e.chord { ne.sub("chord") }
       if e.kind == "rest" || e.kind == "mrest" {

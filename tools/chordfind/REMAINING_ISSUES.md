@@ -8,6 +8,42 @@ Jack has to make first. Each entry says where it was seen and what goes wrong fo
 Rules for adding fixes (Jack): fix general causes, judged on the whole test set, never one chart; ask before a fix
 that looks specific to one chart; show regression numbers, and say which checks were not run.
 
+## 0. Top priority: bars that hold more than their time signature
+
+Agreed with Jack, Nov 16 2026; not built. Today a bar that overflows its meter gets a time signature of its own
+length and "check bar" (Tidy's `overflowMeters`). Nothing is lost, but playback gains a beat and the pulse
+stumbles, like MuseScore's stretched tuplet bars. About 90 such bars in the test sets, nearly all on piano and
+classical pages and real phone scans (27 in 3 of the 11 real charts); lead sheets almost never.
+
+Cutting the end off is not the answer: the overflow usually comes from a misread earlier in the bar, so a cut drops
+notes that were read right. A bar can overflow for several reasons, each with its own repair:
+
+| Cause | Repair |
+| --- | --- |
+| Two lines that sound together (a melody over a held chord) written one after the other in one voice | split into two voices (no value changes) |
+| A missed triplet (three eighths in a beat read plain) | make them a tuplet |
+| One note's value or dot misread | the note's next most likely value |
+| An extra note (a smudge, stem end or grace note read as a note) | drop it |
+| A missed bar line (two bars read as one) | split the bar |
+| A real meter change the reader missed | keep the new meter |
+
+Plan:
+
+1. **Keep the model's full choice lists.** The evidence model scores every choice for every head, but the reader
+   keeps only the winner and its probability, except for onsets, tuplets and time. Keep the lists for note value
+   (the class head), dots and voice too. Reader change only, no retraining.
+2. **Search for the most believable reading that fits.** Every note's alternatives (value, dots, tuplet, voice)
+   compete together, scored by the model's own probabilities, and the bar must come out exactly full. This is
+   the rhythm decoder (`decodeRhythm`) with the bar length as a hard limit instead of a penalty, and with voice
+   splits allowed. A fixed order of tries would miss combinations (a voice mix-up plus one wrong value); scoring
+   does not. When every note was near certain, no value change is believable, which points to a voice split, an
+   extra note or a missed bar line.
+3. **Cut only as a last resort**, when no believable reading fits.
+
+How to judge it: check bars and stretched bars (MuseScore's MIDI export, as for the tuplet fix) near zero with no
+notes lost, on the whole test set. Then accuracy: the OpenScore pages come with the real scores, so check how often
+the chosen repair is the right one, not just a tidy one.
+
 ## 1. Code: computer vision and rules (no model change)
 
 | Issue | Seen in | Effect | Fix needed |
