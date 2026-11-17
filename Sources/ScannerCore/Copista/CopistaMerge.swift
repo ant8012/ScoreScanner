@@ -78,7 +78,7 @@ enum CopistaMerge {
     let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
       "<!DOCTYPE score-partwise PUBLIC \"-//Recordare//DTD MusicXML 4.0 Partwise//EN\" \"http://www.musicxml.org/dtds/partwise.dtd\">\n" +
       first.serialized()
-    return Data(xml.utf8)
+    return ScoreValidityMusicXML.repaired(Data(xml.utf8))
   }
 
   /// The meter a page's score ends in ("3/4"), to carry into the next page.

@@ -150,7 +150,7 @@ extension Copista {
       }
       rd.slashBars = Slashes.bars(page, rd)
       progress("Writing the score")
-      return Page(xml: Tidy.apply(Writer.write(rd, title: title, carriedMeter: carriedMeter)), reading: rd, detections: dets,
+      return Page(xml: ScoreValidityMusicXML.repaired(Tidy.apply(Writer.write(rd, title: title, carriedMeter: carriedMeter))), reading: rd, detections: dets,
                   imgsz: imgsz)
     }
   }

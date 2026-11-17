@@ -69,7 +69,7 @@ public enum Scanner {
     let fakeDynamics = Copista.Writer.dynamicsInWords(read.reading, chordWords)
     if !fakeDynamics.isEmpty {
       for i in fakeDynamics { read.reading.tok[i]?.realP = 0 }
-      written = Copista.Tidy.apply(Copista.Writer.write(read.reading, title: title, carriedMeter: carriedMeter))
+      written = ScoreValidityMusicXML.repaired(Copista.Tidy.apply(Copista.Writer.write(read.reading, title: title, carriedMeter: carriedMeter)))
     }
     let xml = Data(written.utf8)
     // Where each staff and its measures sit, so the chord and text passes can crop the page and place what

@@ -411,6 +411,10 @@ public enum ScoreReader {
     score: DocumentScanResult, metadata: AppleScoreMetadata?, chords: AppleChordAnalysis,
     text: AppleScoreTextAnalysis, crops: [ChordCropImage]
   ) -> ScoreReading {
+    let xml = ScoreValidityMusicXML.repaired(score.xml)
+    let raw = score.rawXML == score.xml ? xml : ScoreValidityMusicXML.repaired(score.rawXML)
+    let score = DocumentScanResult(xml: xml, rawXML: raw, seconds: score.seconds, staffCount: score.staffCount,
+      repairedMeasures: score.repairedMeasures, pageCount: score.pageCount)
     var chords = chords
     chords.counts?.placedInScore = chordCount(in: score.xml)
     return ScoreReading(score: score, metadata: metadata, chords: chords, text: text, chordCrops: crops)
