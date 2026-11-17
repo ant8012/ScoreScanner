@@ -105,6 +105,8 @@ public enum ChordFinder {
     public var beatDistance: Double?
     public var beatSource: String?
     public var anchor = "centre"
+    /// The word sits on a note's ledger lines and stem (`Copista.Writer.sortedFromNotation`): not a chord.
+    public var onNotation = false
     var cx: Double { Double(x0 + x1) / 2 }
   }
 

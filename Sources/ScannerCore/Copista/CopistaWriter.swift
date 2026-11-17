@@ -61,6 +61,8 @@ extension Copista {
     var onset: Double?
     var onsetP = 0.0
     var dist: (beat: [Double], frac: [Double], tup: [Double]?)?
+    /// The model's weights for this note's value and dot count (`Tok.valueP`, `Tok.dotsP`).
+    var valueP: [String: Double]?, dotsP: [Double]?
 
     init(x: Double, kind: String) { self.x = x; self.kind = kind }
 
@@ -70,6 +72,7 @@ extension Copista {
       e.step = step; e.octave = octave; e.alter = alter; e.unpitched = unpitched; e.dur = dur; e.si = si
       e.tupletMark = tupletMark; e.accidental = accidental; e.stem = stem; e.arpeggiate = arpeggiate
       e.onset = onset; e.onsetP = onsetP; e.dist = dist; e.hidden = hidden
+      e.valueP = valueP; e.dotsP = dotsP
       return e
     }
   }
@@ -627,6 +630,7 @@ extension Copista {
         func timed(_ e: Event) {
           e.onset = r.onset; e.onsetP = r.onsetP ?? 0
           if let b = r.onsetBeatP, let fr = r.onsetFracP { e.dist = (b, fr, r.tupP) }
+          e.valueP = r.valueP; e.dotsP = r.dotsP
         }
         if f == "note" {
           var cur = clef
@@ -716,7 +720,8 @@ extension Copista {
     }
 
     // MARK: voices and rhythm
-    static func voices(_ events: [Event], _ sp: Double, singleStaffPart: Bool, barLen: Q?, score: inout [Double]) -> Voices {
+    static func voices(_ events: [Event], _ sp: Double, singleStaffPart: Bool, barLen: Q?, score: inout [Double],
+                       fitBar: Bool = false) -> Voices {
       var vs = Voices()
       for e in Front.stableSorted(events, by: { $0.x < $1.x }) { vs[e.voice] = (vs[e.voice] ?? []) + [e] }
       let nVoices = vs.order.count
@@ -737,7 +742,16 @@ extension Copista {
           }
           order.append(e)
         }
-        if let sc = decodeRhythm(order, strict: singleStaffPart && nVoices == 1, barLen: barLen) { score.append(sc) }
+        let strict = singleStaffPart && nVoices == 1
+        var refit = Set<ObjectIdentifier>()
+        let read = order.map { ($0.typ, $0.dots, $0.tup) }
+        if let sc = decodeRhythm(order, strict: strict, barLen: barLen) {
+          score.append(sc)
+          if fitBar, let barLen,
+             let e = fitOneValue(order, read: read, strict: strict, barLen: barLen, score: sc) {
+            refit.insert(ObjectIdentifier(e))
+          }
+        }
         var out: [Event] = []
         var cursor = Q.zero
         for e in order {
@@ -752,7 +766,12 @@ extension Copista {
           }
           out.append(e)
           cursor += e.dur
-          for m in members[ObjectIdentifier(e)] ?? [] { m.dur = e.dur; m.tup = e.tup; out.append(m) }
+          for m in members[ObjectIdentifier(e)] ?? [] {
+            m.dur = e.dur; m.tup = e.tup
+            // the bar fit gave the root another value: the notes of its chord take it too
+            if refit.contains(ObjectIdentifier(e)) { m.typ = e.typ; m.dots = e.dots }
+            out.append(m)
+          }
         }
         let grouped = wholeTuplets(&out)
         vs[v] = out
@@ -1045,6 +1064,70 @@ extension Copista {
       return grouped
     }
 
+    /// Where a voice's notes end in its bar (as `voices` lays them out from the decoded onsets), and how many start
+    /// before the note ahead of them ends.
+    static func reach(_ order: [Event]) -> (end: Q, overlaps: Int) {
+      var cursor = Q.zero, overlaps = 0
+      for e in order where e.grace == "none" {
+        if let on = e.onset, e.onsetP >= onsetP {
+          let at = Q(pyRound(on * 48), 48)
+          if at < cursor { overlaps += 1 }
+          cursor = at
+        }
+        cursor += Vocab.duration(e.typ, e.dots, e.tup)
+      }
+      return (cursor, overlaps)
+    }
+
+    /// The least a runner-up value or dot count must weigh for the bar fit to try it.
+    static let runnerUpP = 0.05
+
+    /// A voice that runs past its bar's end is mostly one misread value: a quarter read for an eighth, a dot that
+    /// is not there. Each note in turn takes its runner-up values and dot counts as the model weighs them (at least
+    /// `runnerUpP`), and the rhythm is decoded again. The most believable reading that ends within the bar (decoded
+    /// fit plus the change's log weight against the reading it replaces), and no more overlapping than before, is
+    /// kept when it beats the overflowing one. Otherwise the voice stays as read, and the bar keeps its own meter
+    /// ("check bar"). A bar the decoder fitted only by making notes tuplets the model ruled out (below
+    /// `runnerUpP`) is overfull in disguise, and is tried the same way. `read`: each event's value, dots and tuplet
+    /// as read, before decoding.
+    @discardableResult
+    static func fitOneValue(_ order: [Event], read: [(String, Int, String)], strict: Bool, barLen: Q, score: Double) -> Event? {
+      let before = reach(order)
+      // the decoder can also squeeze an overfull bar by making notes tuplets the model ruled out
+      let forced = zip(order, read).contains { e, r in
+        guard e.tup != r.2, let tp = e.dist?.tup, let k = Vocab.tuplets.firstIndex(of: e.tup) else { return false }
+        return tp[k] < runnerUpP
+      }
+      guard before.end > barLen || forced else { return nil }
+      func restore() { for (e, r) in zip(order, read) { e.typ = r.0; e.dots = r.1; e.tup = r.2 } }
+      var best: (i: Int, typ: String, dots: Int, total: Double)?
+      for (i, e) in order.enumerated()
+      where e.grace == "none" && (e.kind == "note" || e.kind == "rest") && e.dist != nil {
+        var tries: [(String, Int, Double)] = []
+        if let vp = e.valueP {
+          let now = max(vp[read[i].0] ?? 0, 1e-6)
+          for (t, p) in vp where t != read[i].0 && p >= runnerUpP { tries.append((t, read[i].1, log(p / now))) }
+        }
+        if let dp = e.dotsP, dp.indices.contains(read[i].1) {
+          let now = max(dp[read[i].1], 1e-6)
+          for (d, p) in dp.enumerated() where d != read[i].1 && p >= runnerUpP { tries.append((read[i].0, d, log(p / now))) }
+        }
+        for (t, d, cost) in tries.sorted(by: { ($0.0, $0.1) < ($1.0, $1.1) }) {
+          restore()
+          e.typ = t; e.dots = d
+          guard let sc = decodeRhythm(order, strict: strict, barLen: barLen) else { continue }
+          let after = reach(order)
+          guard after.end <= barLen, after.overlaps <= before.overlaps else { continue }
+          let total = sc + cost
+          if total > score && (best == nil || total > best!.total) { best = (i, t, d, total) }
+        }
+      }
+      restore()
+      if let best { order[best.i].typ = best.typ; order[best.i].dots = best.dots }
+      _ = decodeRhythm(order, strict: strict, barLen: barLen)
+      return best.map { order[$0.i] }
+    }
+
     static func decodeRhythm(_ order: [Event], strict: Bool, barLen: Q?) -> Double? {
       let evs = order.filter { $0.grace == "none" && ($0.kind == "note" || $0.kind == "rest") && $0.dist != nil }
       guard !evs.isEmpty else { return nil }
@@ -1325,6 +1408,29 @@ extension Copista {
       return (starts, end)
     }
 
+    /// The bar fit (`fitOneValue`) mends one voice at a time, but a bar is one column across every staff: when
+    /// the other voices still run past the meter, the column's length vote can fall to the meter and `chop` would
+    /// cut those voices, dropping a chord no single value can shorten. So each column comes from the fitted build
+    /// only where every voice in it then ends within its meter; elsewhere the bar is written as read (a check bar,
+    /// its music whole). Both builds read the same events, so their shapes match.
+    static func fittedColumns(_ plain: [[[StaffBar?]]], _ fitted: [[[StaffBar?]]]) -> [[[StaffBar?]]] {
+      guard plain.count == fitted.count, zip(plain, fitted).allSatisfy({ $0.count == $1.count }) else { return plain }
+      var out = plain
+      for mi in 0..<(plain.map(\.count).max() ?? 0) {
+        let fits = fitted.allSatisfy { ms in
+          guard mi < ms.count else { return true }
+          return ms[mi].allSatisfy { st in
+            guard let st else { return true }
+            let len = timeLen(st.state.time)
+            return st.voices.values.allSatisfy { voiceStarts($0, len).1 <= len }
+          }
+        }
+        guard fits else { continue }
+        for p in out.indices where mi < out[p].count && out[p][mi].count == fitted[p][mi].count { out[p][mi] = fitted[p][mi] }
+      }
+      return out
+    }
+
     static func columnLengths(_ built: [[[StaffBar?]]]) -> [Q?] {
       var out: [Q?] = []
       for mi in 0..<(built.map(\.count).max() ?? 0) {
@@ -1556,7 +1662,7 @@ extension Copista {
       let singlePart = plans.count == 1
 
       let brackets = bracketMarks(rd)
-      func build(_ opening: String?) -> ([[[StaffBar?]]], [Double]) {
+      func build(_ opening: String?, fitBars: Bool = false) -> ([[[StaffBar?]]], [Double]) {
         var built: [[[StaffBar?]]] = []
         var fit: [Double] = []
         for pl in plans {
@@ -1600,7 +1706,8 @@ extension Copista {
                 marks.slash = prevSlash[ki]
               }
               prevSlash[ki] = marks.slash
-              let vs = voices(ev, L.staves[staff].sp, singleStaffPart: pl.count == 1, barLen: timeLen(state[ki].time), score: &fit)
+              let vs = voices(ev, L.staves[staff].sp, singleStaffPart: pl.count == 1, barLen: timeLen(state[ki].time), score: &fit,
+                              fitBar: fitBars)
               if !ev.isEmpty { prevEvents[ki] = ev }
               m.append(StaffBar(staff: staff, bar: j, voices: vs, dirs: dirs, marks: marks, state: state[ki]))
               if let ec = marks.endClef { state[ki].clef = ec }
@@ -1614,7 +1721,7 @@ extension Copista {
 
       let carried = carriedMeter.flatMap { m in Vocab.times.contains(m) && m != "other" ? m : nil }
       let opening = carried != nil && !openingPrinted(rd) ? carried : pageMeter(rd) { build($0).1 }
-      let built = build(opening).0
+      let built = fittedColumns(build(opening).0, build(opening, fitBars: true).0)
 
       // ties: the next note of the voice on the same step and octave (this bar or the next)
       var pairs: [(Event, Event?, Bool)] = []

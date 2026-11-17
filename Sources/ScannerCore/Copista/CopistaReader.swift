@@ -95,6 +95,10 @@ extension Copista {
     var chord: Double?, tie: Double?
     var onset: Double?, onsetP: Double?
     var onsetBeatP: [Double]?, onsetFracP: [Double]?, tupP: [Double]?
+    /// A note's or rest's value as the model weighs it: each value of the read class's family ("quarter",
+    /// "eighth", ...) with its probability. And the probability of each dot count. Runner-up readings the writer
+    /// tries when a bar runs past its end.
+    var valueP: [String: Double]?, dotsP: [Double]?
 
     var cls: Int { heads["cls"]!.v }
     var real: Bool { realP >= 0.5 }
@@ -326,6 +330,16 @@ extension Copista {
           }
         }
         r.heads[k] = h
+        if k == "cls" && !fams.isDisjoint(with: ["note", "rest"]) {
+          let fam = family(classes[h.v])
+          var vp: [String: Double] = [:]
+          for (i, c) in classes.enumerated() where family(c) == fam {
+            guard let u = c.firstIndex(of: "_"), Vocab.typeQ[String(c[c.index(after: u)...])] != nil else { continue }
+            vp[String(c[c.index(after: u)...]), default: 0] += Double(p[p.startIndex + i])
+          }
+          r.valueP = vp
+        }
+        if k == "dots" { r.dotsP = p.map(Double.init) }
       }
       if fams.contains("measure") { r.timeP = Evidence.softmax(row("time")).map { pyRound(Double($0), 5) } }
       if fams.contains("note") {

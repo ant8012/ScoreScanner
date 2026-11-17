@@ -167,7 +167,7 @@ public enum LocalChordReader {
     var crops: [AppleChordCropAnalysis] = []
     var boxedLetters: [Placed] = []
     var skipped = (lower: 0, unplaced: 0, alternates: 0, basses: 0, strays: 0)
-    for word in scan.chordWords where word.kind == .text {
+    for word in scan.chordWords where word.kind == .text && !word.onNotation {
       try Task.checkCancellation()
       // chords stand over the upper staff of a grand staff; text over the lower one is something else
       guard let target = scan.chordWordStaffs[word.staff], geometries.indices.contains(target.staff) else {

@@ -156,9 +156,10 @@ enum LocalTextReader {
         }
         continue
       }
-      // above the first system's chord row, words that are no tempo, section or jump belong to the header (an
-      // editor's credit, "(Posthumous)"): not staff text in the first bar
-      if header && read.box.y1 <= headerBottom && !sectionWords(text) { continue }
+      // high above the first staff, beside the title, words that are no tempo, section or jump are credits ("Sammy
+      // Cahn", "Spiritual"), not staff text in the first bar. Instructions ("(Break)", "MELODY", a tempo) stand
+      // within 6 staff spaces of the staff; on 18 pages no instruction stood higher and 8 of 10 credits did.
+      if header && Double(read.box.y1) < first.miny - 7 * sp && !sectionWords(text) { continue }
       place(read, category: sectionWords(text) ? "section" : "instruction", text: text)
     }
     // Letters the chord pass found opening a line on a chord's beat: rehearsal letters whose box was missed.
