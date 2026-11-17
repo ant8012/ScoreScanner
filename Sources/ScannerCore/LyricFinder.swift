@@ -34,8 +34,12 @@ public enum LyricFinder {
   static func find(_ page: Copista.Gray, _ rd: Copista.Reading) -> [Word] {
     let L = rd.layout
     let order = L.staves.indices.sorted { L.staves[$0].y0 < L.staves[$1].y0 }
+    // nothing is sung under the lower staff of a piano's grand staff: what is printed there is pedalling, the
+    // left hand's markings, or the page's footer (a hymn's words stand between its two staves, under the upper one)
+    let lowerOfGrand = Set(Copista.Writer.placedStaves(rd).filter { $0.grandStaff && $0.staffInPart > 0 }
+      .map(\.layoutStaff))
     var out: [Word] = []
-    for (n, k) in order.enumerated() {
+    for (n, k) in order.enumerated() where !lowerOfGrand.contains(k) {
       let st = L.staves[k], sp = st.sp
       // down to the chord band of the next staff below
       let below = order.dropFirst(n + 1).map { L.staves[$0] }.first { $0.y0 > st.y1 + 2 * sp }
@@ -69,7 +73,8 @@ public enum LyricFinder {
       // compact symbols only: a tie, slur, hairpin or bracket has a wide box that is mostly empty, and clearing
       // it would cut the lyrics under it (their thin lines are left out of the text lines anyway)
       let f = Copista.family(Copista.Writer.cls(rd, s.i))
-      guard !wide.contains(f) else { continue }
+      // a pedal sign ("Ped.", the release star) is compact; only a pedal line is wide
+      guard !wide.contains(f) || (f == "pedal" && s.box.2 - s.box.0 <= 4 * sp) else { continue }
       let px = f == "note" ? 0.75 * sp : 0.15 * sp, py = 0.15 * sp
       let x0 = max(0, Int(s.box.0 - px) - cols.lowerBound), x1 = min(w, Int(s.box.2 + px) - cols.lowerBound + 1)
       let y0 = max(0, Int(s.box.1 - py) - rows.lowerBound), y1 = min(h, Int(s.box.3 + py) - rows.lowerBound + 1)

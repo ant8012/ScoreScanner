@@ -33,6 +33,43 @@ extension Copista.Writer {
   }
 }
 
+extension Copista.Writer {
+  /// The chord finder's words without the notation it took for text, which the chord and text readers would
+  /// otherwise read as words:
+  /// - a note above (or below) the staff with its ledger lines and stem: a stem crossed by two or three ledger
+  ///   lines reads as a capital "E". A word goes when most of it lies in that note's column, between its head and
+  ///   the staff. A chord is never printed there: it would sit on the note.
+  /// - a pedal sign the detector found ("Ped.", the release star), which reads as "Led." or "Re.".
+  static func withoutNotation(_ words: [ChordFinder.Proposal], _ rd: Copista.Reading) -> [ChordFinder.Proposal] {
+    let L = rd.layout
+    var zones: [Copista.Box] = []
+    for s in L.syms where s.staff >= 0 && s.staff < L.staves.count && isReal(rd, s.i) {
+      let st = L.staves[s.staff], sp = st.sp
+      switch Copista.family(cls(rd, s.i)) {
+      case "note":
+        if s.box.3 <= st.y0 + 0.25 * sp {
+          zones.append((s.box.0 - 0.6 * sp, s.box.1, s.box.2 + 0.6 * sp, st.y0 + 0.25 * sp))
+        } else if s.box.1 >= st.y1 - 0.25 * sp {
+          zones.append((s.box.0 - 0.6 * sp, st.y1 - 0.25 * sp, s.box.2 + 0.6 * sp, s.box.3))
+        }
+      case "pedal" where s.box.2 - s.box.0 <= 4 * sp:
+        zones.append(s.box)
+      default:
+        break
+      }
+    }
+    guard !zones.isEmpty else { return words }
+    return words.filter { w in
+      let area = Double(max(1, (w.x1 - w.x0) * (w.y1 - w.y0)))
+      return !zones.contains { z in
+        let ox = min(Double(w.x1), z.2) - max(Double(w.x0), z.0)
+        let oy = min(Double(w.y1), z.3) - max(Double(w.y0), z.1)
+        return ox > 0 && oy > 0 && ox * oy >= 0.6 * area
+      }
+    }
+  }
+}
+
 extension Copista {
   /// Bars filled with rhythm slashes: a stemless slash per beat on the middle line, as lead sheets print solos and
   /// comping ("fill with slashes"). The detector has no slash class: it reads them as quarter notes on the middle

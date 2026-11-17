@@ -4,6 +4,10 @@ import Testing
 @testable import ScannerCore
 
 struct LocalTextReaderTests {
+  @Test func misreadPedalSignsAreNotStaffText() {
+    for t in ["Ped.", "Led.", "Red.", "Ted.", "'Led.", "Pcd."] { #expect(LocalTextReader.pedalSign(t), "\(t)") }
+    for t in ["rit.", "Largo", "a tempo", "Lead", "Fine", "Red Rose"] { #expect(!LocalTextReader.pedalSign(t), "\(t)") }
+  }
   @Test func navigationIsSpelledAsMuseScoreMatchesIt() {
     #expect(LocalTextReader.navigation("D.S. al Coda") == "D.S. al Coda")
     #expect(LocalTextReader.navigation("D. S. AL CODA") == "D.S. al Coda")

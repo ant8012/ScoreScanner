@@ -156,6 +156,9 @@ enum LocalTextReader {
         }
         continue
       }
+      // above the first system's chord row, words that are no tempo, section or jump belong to the header (an
+      // editor's credit, "(Posthumous)"): not staff text in the first bar
+      if header && read.box.y1 <= headerBottom && !sectionWords(text) { continue }
       place(read, category: sectionWords(text) ? "section" : "instruction", text: text)
     }
     // Letters the chord pass found opening a line on a chord's beat: rehearsal letters whose box was missed.
@@ -650,7 +653,14 @@ enum LocalTextReader {
     let dynamics: Set<String> = ["ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "sfz", "fp", "cresc", "dim"]
     if dynamics.contains(letters.lowercased()) { return nil }
     if lyricLike(text) { return nil }
+    if pedalSign(text) { return nil }
     return text
+  }
+
+  /// A piano pedal sign the detector missed, read as text: "Ped." in its engraved script reads as "Led.", "Red.",
+  /// "Ted.". It is pedalling, not words to print.
+  static func pedalSign(_ text: String) -> Bool {
+    text.range(of: #"^['’]?[PLRT][eac@]d\.?$"#, options: .regularExpression) != nil
   }
 
   /// A chord the reader could not make out ("Dba7(#11)Ba9"): a root letter, then no space, a number or bracket

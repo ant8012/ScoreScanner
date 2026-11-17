@@ -61,9 +61,9 @@ public enum Scanner {
     let read = try engine.read(page, title: title, carriedMeter: carriedMeter, progress: progress)
     guard read.xml.contains("<pitch>") else { throw ScannerError.invalid("No readable music was found") }
     progress("Finding chord symbols")
-    let chordWords = Copista.Writer.withoutTupletNumbers(ChordFinder.find(
+    let chordWords = Copista.Writer.withoutNotation(Copista.Writer.withoutTupletNumbers(ChordFinder.find(
       gray: page.pixels, width: page.width, height: page.height, layout: ChordFinder.layout(read.reading)),
-      read.reading)
+      read.reading), read.reading)
     // a chord name in italics read as a dynamic ("B°" as "pp"): drop it and write the score again
     var written = read.xml
     let fakeDynamics = Copista.Writer.dynamicsInWords(read.reading, chordWords)
