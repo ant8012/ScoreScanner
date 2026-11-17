@@ -169,6 +169,6 @@ never committed. Licence texts the app shows are in `App/SampleAssets/Licenses/`
 ## Publishing ScannerCore source
 
 The original code is GPLv3; retain LICENSE and THIRD_PARTY_NOTICES.md when distributing.
-Follow PUBLIC_PACKAGE.md to prepare the public source package from the release tag.
-Do not make the private repository or its history public. Public source publication
-and pushes require the owner's approval of the prepared package.
+Keep the app and package in this existing ScoreScanner repository. Follow
+SOURCE_RELEASE.md and make the exact shipped tag publicly readable before distributing
+Aria. Never publish local scans, training data, benchmark outputs or credentials.

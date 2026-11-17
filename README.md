@@ -112,10 +112,9 @@ ScannerCore builds for Android with the Swift Android SDK (Skip), for Aria's And
 Check an Android build: `skip android build --arch aarch64 --product ScannerCore` from the repository.
 
 
-## License and public package
+## License and source releases
 
 Original ScoreScanner and ScannerCore source is copyright 2026 Jack Gruber and licensed
 under GNU GPL version 3; see LICENSE. Third-party components retain their licenses and
-notices, listed in THIRD_PARTY_NOTICES.md. The public ScannerCore package is prepared
-without this repository's private history, standalone app or scan data. See
-PUBLIC_PACKAGE.md for the release procedure and publication status.
+notices, listed in THIRD_PARTY_NOTICES.md. The app and Swift package stay together at
+https://github.com/hdi200/ScoreScanner. See SOURCE_RELEASE.md for the release checklist.
