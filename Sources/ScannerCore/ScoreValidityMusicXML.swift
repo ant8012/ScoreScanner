@@ -506,9 +506,12 @@ enum ScoreValidityMusicXML {
   }
   static func apply(_ xml: String) throws -> String { String(decoding: try apply(Data(xml.utf8)), as: UTF8.self) }
 
-  /// The repaired score, or the score exactly as written when the repair cannot finish (a bar it has no valid
-  /// spelling for). That is the file the scanner wrote before this pass existed: one bar may need MuseScore's
-  /// forced import, which beats losing the whole scan.
-  static func repaired(_ data: Data) -> Data { (try? apply(data)) ?? data }
-  static func repaired(_ xml: String) -> String { (try? apply(xml)) ?? xml }
+  /// Repair rhythmic spelling when possible, then print ordinary silent gaps. If rhythm repair cannot
+  /// finish, keep the original pitches and timing rather than lose the scan.
+  static func repaired(_ data: Data) -> Data {
+    // Repair can itself add silent padding. Print ordinary gaps only after that final spelling;
+    // tuplet fillers now have their time-modification and remain hidden.
+    ScoreGapRestsMusicXML.apply((try? apply(data)) ?? data)
+  }
+  static func repaired(_ xml: String) -> String { String(decoding: repaired(Data(xml.utf8)), as: UTF8.self) }
 }

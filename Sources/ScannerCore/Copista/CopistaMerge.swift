@@ -1,8 +1,9 @@
 import Foundation
 
 /// Pages read by copisteria, joined into one score: each part's measures page after page, renumbered. A page that
-/// shows fewer parts (a part resting, a system that hides it) gives the parts it lacks bars of hidden rest as long
-/// as its own bars, so the parts stay in step. Each page keeps the divisions, key, meter and clefs it states.
+/// shows fewer parts (a part resting, a system that hides it) gives the parts it lacks silent padding as long
+/// as its own bars, so the parts stay in step. The printed-rest pass makes that padding visible. Each page keeps
+/// the divisions, key, meter and clefs it states.
 enum CopistaMerge {
   static func combine(_ pages: [Data], title: String = "") throws -> Data {
     let roots = try pages.map { try XMLNode.parse($0) }

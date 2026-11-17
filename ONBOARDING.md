@@ -25,6 +25,8 @@ apps call. In order:
    - `CopistaDetector`, `CopistaEngine`: the three ONNX models in `Resources/Models/`.
    - `CopistaReader`: detections to staffs, systems, bars and voices.
    - `CopistaWriter`: MusicXML. `CopistaTidy`: drops impossible notes, caps voices (untouched bars stay identical).
+   - `ScoreGapRestsMusicXML` gives ordinary silent forwards/hidden padding printed rests at the end of the
+     validity guard (including padding the guard creates). It preserves cursor timing, skips forwards over existing music, and keeps tuplet fillers hidden.
    - PDFs: `PDFScanner` renders pages at 2480 px and `CopistaMerge` joins them.
 2. **Chord names, on the device** (`chordReader: .onDevice`, the default). `ChordFinder` (a port of
    `tools/chordfind/find.py`, kept identical by `finder_parity.py`) finds each word above the staves with its bar and
@@ -163,3 +165,10 @@ evidence inputs must be int64. `Vendor/copisteria/` records what the port change
 copisteria and copista-2m (Apache-2.0) in `Vendor/copisteria/`. ONNX Runtime 1.27.0 (MIT) is downloaded as a
 pinned binary target. The app's player, musicxml-player (GPL-3.0), is fetched by `tools/prepare_player.py` and
 never committed. Licence texts the app shows are in `App/SampleAssets/Licenses/`.
+
+## Publishing ScannerCore source
+
+The original code is GPLv3; retain LICENSE and THIRD_PARTY_NOTICES.md when distributing.
+Follow PUBLIC_PACKAGE.md to prepare the public source package from the release tag.
+Do not make the private repository or its history public. Public source publication
+and pushes require the owner's approval of the prepared package.

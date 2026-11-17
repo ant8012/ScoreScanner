@@ -42,6 +42,8 @@ process.
 
 What the reader writes:
 
+- Silent gaps from missed symbols are shown as ordinary printed rests, split at the meter’s beats. Empty staves
+  get measure rests; tuplet filler rests stay hidden. Note timing, pickups and short bars keep their lengths.
 - A bar that holds more than its meter gets a time signature of its own length with **"check bar"** above it,
   so MuseScore accepts the file and the bar is easy to find and fix.
 - Part names it cannot read are written as hidden `Part n` (`print-object="no"`); instrument names read from the
@@ -109,3 +111,11 @@ ScannerCore builds for Android with the Swift Android SDK (Skip), for Aria's And
 
 Check an Android build: `skip android build --arch aarch64 --product ScannerCore` from the repository.
 
+
+## License and public package
+
+Original ScoreScanner and ScannerCore source is copyright 2026 Jack Gruber and licensed
+under GNU GPL version 3; see LICENSE. Third-party components retain their licenses and
+notices, listed in THIRD_PARTY_NOTICES.md. The public ScannerCore package is prepared
+without this repository's private history, standalone app or scan data. See
+PUBLIC_PACKAGE.md for the release procedure and publication status.
