@@ -20,6 +20,8 @@ public enum LyricFinder {
     /// Other notes under the word, left to right: a word whose hyphen touches its letters ("sha-dows") reads as one
     /// and is split onto them.
     public var moreNoteIDs: [String] = []
+    /// The word stands between two staves of one system (a voice over its piano), above the lower one.
+    public var betweenStaves = false
   }
 
   /// One piece of ink in the band, in page pixels.
@@ -49,7 +51,12 @@ public enum LyricFinder {
       let r0 = Int(st.y1 + 0.5 * sp), r1 = min(page.height, Int(min(limit, st.y1 + 9 * sp)))
       let c0 = max(0, Int(st.x0 - sp)), c1 = min(page.width, Int(st.x1))
       guard r1 - r0 > Int(1.2 * sp), c1 > c0 else { continue }
-      out += staffWords(page, rd, k, rows: r0..<r1, cols: c0..<c1)
+      let between = below.map { $0.system == st.system && st.system >= 0 } ?? false
+      out += staffWords(page, rd, k, rows: r0..<r1, cols: c0..<c1).map { w in
+        var w = w
+        w.betweenStaves = between
+        return w
+      }
     }
     return out
   }

@@ -3,7 +3,7 @@ import Foundation
 /// Pages read by copisteria, joined into one score: each part's measures page after page, renumbered. A page that
 /// shows fewer parts (a part resting, a system that hides it) gives the parts it lacks silent padding as long
 /// as its own bars, so the parts stay in step. The printed-rest pass makes that padding visible. Each page keeps
-/// the divisions, key, meter and clefs it states.
+/// the divisions it states, and the key, meter and clefs it changes.
 enum CopistaMerge {
   static func combine(_ pages: [Data], title: String = "") throws -> Data {
     try combine(pages, title: title, labels: []).xml
@@ -89,6 +89,7 @@ enum CopistaMerge {
         }
       }
     }
+    dropRestated(parts)
     first.children = first.children.filter { $0.tag != "part" } + parts
     if !title.isEmpty && first.first("work") == nil {
       first.children.insert(XMLNode("work", children: [XMLNode("work-title", text: title)]), at: 0)
@@ -97,6 +98,31 @@ enum CopistaMerge {
       "<!DOCTYPE score-partwise PUBLIC \"-//Recordare//DTD MusicXML 4.0 Partwise//EN\" \"http://www.musicxml.org/dtds/partwise.dtd\">\n" +
       first.serialized()
     return (ScoreValidityMusicXML.repaired(Data(xml.utf8)), labels.first ?? [])
+  }
+
+  /// Each page opens by stating its clefs, key and meter again. Joined, a statement equal to the one in force says
+  /// nothing new, and a reader takes it for a change: a courtesy clef and meter drawn before the page turn.
+  static func dropRestated(_ parts: [XMLNode]) {
+    for part in parts {
+      var current: [String: String] = [:]   // "clef 2" -> the clef in force on staff 2
+      for m in part.all("measure") {
+        for a in m.all("attributes") {
+          a.children.removeAll { x in
+            guard ["clef", "key", "time"].contains(x.tag) else { return false }
+            let slot = "\(x.tag) \(x.attributes["number"] ?? "1")"
+            // a meter Tidy marked as an overfull bar's stays: the next page checks for it
+            if x.attributes["id"] != nil { current[slot] = nil; return false }
+            let plain = x.copy()
+            plain.attributes["print-object"] = nil
+            let said = plain.serialized()
+            if current[slot] == said { return true }
+            current[slot] = said
+            return false
+          }
+        }
+        m.children.removeAll { $0.tag == "attributes" && $0.children.isEmpty }
+      }
+    }
   }
 
   /// A silent bar standing in for a part the page leaves out takes the page's meter and key changes from the bar

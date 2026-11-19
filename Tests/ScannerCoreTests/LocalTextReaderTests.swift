@@ -4,6 +4,12 @@ import Testing
 @testable import ScannerCore
 
 struct LocalTextReaderTests {
+  @Test func rowsBelowThePageFindNothing() {
+    // the last staff ending at the page's foot: the band under it lies off the page (once a crash)
+    let page = LocalChordReader.Image(width: 100, height: 100, pixels: [UInt8](repeating: 255, count: 100 * 100))
+    #expect(LocalTextReader.phrases(page: page, rows: 120..<160, cols: 0..<100, sp: 10).isEmpty)
+  }
+
   @Test func misreadPedalSignsAreNotStaffText() {
     for t in ["Ped.", "Led.", "Red.", "Ted.", "'Led.", "Pcd."] { #expect(LocalTextReader.pedalSign(t), "\(t)") }
     for t in ["rit.", "Largo", "a tempo", "Lead", "Fine", "Red Rose"] { #expect(!LocalTextReader.pedalSign(t), "\(t)") }

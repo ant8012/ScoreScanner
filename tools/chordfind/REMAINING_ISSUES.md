@@ -2,15 +2,20 @@
 
 Everything known to still go wrong in scans, sorted by what it takes to fix: code that looks at the page (no
 model change), retraining the chord reader on RunPod (`NEXT_RUNPOD_RUN.md`), retraining another model, or a call
-Jack has to make first. Each entry says where it was seen and what goes wrong for the user. Updated Nov 16 2026
-(ScannerCore 0.1.12).
+Jack has to make first. Each entry says where it was seen and what goes wrong for the user. Updated Nov 19 2026
+(ScannerCore 0.1.21).
 
 Rules for adding fixes (Jack): fix general causes, judged on the whole test set, never one chart; ask before a fix
 that looks specific to one chart; show regression numbers, and say which checks were not run.
 
 ## 0. Top priority: bars that hold more than their time signature
 
-Agreed with Jack, Nov 16 2026; not built. Today a bar that overflows its meter gets a time signature of its own
+Agreed with Jack, Nov 16 2026; partly built. Done: the validity pass (23a3d63) means MuseScore never refuses a
+bar, and the reader keeps the model's runner-up note values and dots and tries them on overfull bars (30832b1,
+8 fewer check bars, none new, no note lost). Not done: voice splits, tuplets and dropped notes in the search, and
+missed bar lines; most of the check bars below are still there.
+
+Today a bar that overflows its meter gets a time signature of its own
 length and "check bar" (Tidy's `overflowMeters`). Nothing is lost, but playback gains a beat and the pulse
 stumbles, like MuseScore's stretched tuplet bars. About 90 such bars in the test sets, nearly all on piano and
 classical pages and real phone scans (27 in 3 of the 11 real charts); lead sheets almost never.
@@ -51,13 +56,17 @@ the chosen repair is the right one, not just a tidy one.
 | Chords between the two staves of one system (melody over bass) dropped as "lyrics of the line above" | Roadside Distraction p. 2 (F, B♭, D♭, E♭ lost in 5 bars) | chords missing | Chord finder: its "text hangs below the line above" rule is meant for lyrics under the previous system; within one system, pass the words to the reader (lyrics do not parse as chords). Measure on piano-vocal pages, where lyrics do sit between staves. |
 | A melody note high above the staff (with its accidental) looks like a second chord stacked under the real one, which is then dropped as "stacked" | Nacirema (E♭Δ9(♯11)/G♯, twice) | chord missing | Chord finder: clear accidentals and notes the detector placed on the staff before stacking words. Kept in step with `find.py`. |
 | A chord printed across a bar line, centre just left of it, goes to the end of the earlier bar | Peaceful Warrior (B/F♯ bar 34 for 35) | chord a beat early | Needs a decision: ~130 such chords on real pages, no answer key for their bars. Jack to decide before any rule. |
-| Short bars filled with an invisible gap, which MuseScore shows as hidden rests | Jack's list | hidden rests | Writer: fill with real rests of plain values (a quarter + a sixteenth); keep the gap only where no plain rest fits. Playback unchanged. Agreed in principle, not built. |
 | A missed bar line merges two bars into one | slash pages, synthetic sets (6 of 38 clean pages) | bar count off, endings and slashes wrong | Layout: find bar lines the detector missed (there is a pass for this; why these slip through is not yet looked at). |
 | A multi-bar rest ("8" over a long rest) becomes one bar | Peaceful Warrior "Piano Interlude 8" | every later bar numbered wrong | Writer: read the number over a multi-rest and write that many bars. |
 | Stemmed and half-note rhythm slashes stay notes | Secrets of the Stars bars 14, 42; Real Book bars with 6 slashes | wrong notes | Extend the slash finder to stems and hollow slashes; same aggregate checks as stemless slashes. |
 | Small rhythm cues above the staff written as notes | Secrets of the Stars bars 43, 47 | extra notes | Writer or finder: notes far above the staff, smaller than the staff's noteheads, as cues. Not looked at. |
 | Instruction sentences under notes read as lyrics | 4 of 37 Real Book pages | false lyrics | Lyric filter; text alone cannot tell them from lyrics. Possibly a "lyric line spans the system" test. |
-| Lyrics on piano-vocal pages and on rough photos weaker | Jack's "Country Roads"; rough synthetic 73% vs clean 94% | missing and garbled syllables | Lyric finder band on piano-vocal pages; photo robustness. |
+| Lyrics on piano-vocal pages and on rough photos weaker | Jack's "Country Roads"; rough synthetic 73% vs clean 94% | missing and garbled syllables | Lyric finder band on piano-vocal pages; photo robustness. Two causes fixed in the working tree (Edelweiss, a user's Pianote PDF): a syllable spelled like a chord and hyphenated on ("E - del - weiss") was dropped, and the first word of a lyric line between the staves was also written as staff text. |
+| A hymn's verse number ("1. Now") takes the first note, so the first word is lost and stays as staff text | "Now Let Us Rejoice" (secularhymnal.com) | first syllable of the verse missing | Lyric finder: a verse number is a label, the next word takes the note. Check on hymnals with numbered verses (the regression's hymns have none). |
+| A staff missed on a clean page (nearly empty, or its lines broken up by ledger lines and 8va) | OpenScore: 23 of 79 pages | parts or systems grouped wrong, music on the wrong staff | Layout (CopistaFront staff tracing). The staff finder's threshold is load-bearing for faint lines: correcting it lost 9 OpenScore pages (Nov 19). |
+| Large scores: a later page whose part names can't be read matches its staves to the wrong parts | The Matrix (a user's orchestral photocopy): 33 parts against about 25 | winds split into extra parts | CopistaMergeAlign; part names on photocopies' later pages are too small or faint to read. |
+| One-line percussion staves not found | The Matrix | percussion missing | Staff finder looks for five lines only. |
+| Part names read from page furniture on later pages | `scanned_regression_test` (a Japanese title read as the part name "民") | junk part name | Since 0.1.20 names are read on every page; a name should look like an instrument name or abbreviation. |
 | Bass-only slash chords ("/A") read as A | Peaceful Warrior, Travelers | wrong root | Deferred by Jack. A slash-stroke check on the page was prototyped and removed. |
 
 ## 2. Chord reader retraining (RunPod)
@@ -87,6 +96,7 @@ with the crops drawn over the page.
 | No slash or rhythm-slash class (handled in code for stemless slashes only) | all slash charts | see section 1 | copisteria detector (long term) |
 | Boxed rehearsal letters in a handwriting font misread ("D" → "0") | Roadside Distraction | wrong rehearsal mark | text model (`text_rec.onnx`), a fine-tune of its own |
 | Rehearsal letters H-L not found | Peaceful Warrior | rehearsal marks missing | partly the finder's box test, partly the text model |
+| A plain note missed or misread, differently on the Mac and the phone (the page renders slightly differently) | Edelweiss: bar 30's bass G missed on the Mac, bar 25's bass dot lost on the phone | wrong or missing note | copisteria detector and evidence reader |
 
 copisteria retraining is a larger job than the chord reader (detector and evidence models, its own training data);
 collect cases here until it is worth it.
@@ -102,6 +112,18 @@ collect cases here until it is worth it.
 | Chords across bar lines (section 1) | see above |
 
 ## Fixed recently (for reference)
+
+0.1.21 (Nov 19): a page whose last staff ends at its foot no longer crashes the scan (2 of 200 sampled Real Book
+pages); chord-spelled syllables hyphenated on ("E - del - weiss") kept as lyrics;
+lyric words between piano staves no longer also written as staff text; a new PDF page no longer restates its clefs,
+key and meter, which Aria drew as a courtesy clef and meter before every page turn.
+
+0.1.13-0.1.20: ScannerCore builds for Android; phone photos of books (page edge and binding shadow no longer join
+piano systems, curled photos keep piano staves one part); a new PDF page starts a new system, not a new page;
+incomplete tuplets kept without losing notes; MuseScore never refuses a scan (validity pass); runner-up values fit
+overfull bars; notation on classical pages (ledger lines, pedal marks, "Op. 66") no longer read as chords, text or
+lyrics; ordinary gaps printed as rests; large orchestral scores and photocopies (tilted pages straightened, staves
+joined into systems by their bar lines, parts matched across pages by name and clef).
 
 0.1.6-0.1.11: octave-clef misreads, italic chords as "pp", part names and instruments, slash bars (stemless),
 1st/2nd endings, lyrics, DM as D major, sus2, madd9, 7+, +maj7, maj7sus, add♯11, triplet "3" as a chord, keys

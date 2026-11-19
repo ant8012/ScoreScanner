@@ -82,6 +82,23 @@ enum LocalTextReader {
       }
     }
 
+    progress("Reading lyrics")
+    // the chords the chord reader accepted: a lyric word on one of them is the chord band of the line below
+    let acceptedChords = words.filter { chordWords.contains(LocalChordReader.wordKey($0.x0, $0.y0, $0.x1, $0.y1)) }
+      .map { Box(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) }
+    // the words sung between two staves of one system (a voice over its piano) stand where the lower staff's text
+    // would, and are read as that too
+    var sung: [(box: Box, text: String)] = []
+    let lyrics = try readLyrics(scan.lyricWords, page: page, model: model, chords: acceptedChords) { w, text in
+      if w.betweenStaves { sung.append((Box(x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1), text)) }
+    }
+    /// Staff text that only repeats the lyric words it stands on ("Small" over the sung "Small").
+    func repeatsLyrics(_ phrase: Phrase, _ text: String) -> Bool {
+      let letters = { (t: String) in t.lowercased().filter(\.isLetter) }
+      let under = sung.filter { overlaps($0.box, phrase.box) }.sorted { $0.box.x0 < $1.box.x0 }
+      return !under.isEmpty && !sectionWords(text) && letters(text) == under.map { letters($0.text) }.joined()
+    }
+
     // Staff text: the finder's words that are not chords, joined into runs on one line.
     let lineStart = Dictionary(
       (chords?.lineStartLetters ?? []).map { ($0.word, $0.letter) }, uniquingKeysWith: { a, _ in a })
@@ -137,6 +154,7 @@ enum LocalTextReader {
       }
       // under a staff, only navigation: the rest is lyrics
       if kinds.contains(.lineAbove) { continue }
+      if repeatsLyrics(read, read.text) { continue }
       if let bpm = metronome(read.text) {
         let onFirst = read.words.contains { scan.chordWordStaffs[$0.staff]?.staff == firstIndex }
         if header && onFirst && headerTempo == nil && (metadata?.bpm ?? 0) == 0 {
@@ -171,7 +189,9 @@ enum LocalTextReader {
     }
     // Navigation printed under the last staff, where the finder does not look ("Fine", "D.S. al Coda").
     let last = geometries[lastIndex]
-    let below = Int(last.maxy + 0.5 * sp)..<min(page.height, Int(last.maxy + 6 * sp))
+    // (none when the last staff ends at the page's foot)
+    let top = min(page.height, Int(last.maxy + 0.5 * sp))
+    let below = top..<max(top, min(page.height, Int(last.maxy + 6 * sp)))
     for box in phrases(page: page, rows: below, cols: 0..<page.width, sp: sp) {
       let read = try readPhrase(Phrase(box: box), page: page, model: model)
       guard let jump = navigation(read.text) else { continue }
@@ -208,11 +228,6 @@ enum LocalTextReader {
         title: m.title, subtitle: m.subtitle, composer: m.composer, arranger: m.arranger, partName: m.partName,
         tempoText: m.tempoText, beatUnit: unit, bpm: m.bpm, copyright: m.copyright)
     }
-    progress("Reading lyrics")
-    // the chords the chord reader accepted: a lyric word on one of them is the chord band of the line below
-    let acceptedChords = words.filter { chordWords.contains(LocalChordReader.wordKey($0.x0, $0.y0, $0.x1, $0.y1)) }
-      .map { Box(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) }
-    let lyrics = try readLyrics(scan.lyricWords, page: page, model: model, chords: acceptedChords)
     // every page's names: a later page of a large score shows a different set of parts, matched by them
     progress("Reading part names")
     var names: (long: [String], short: [String])? = try partNames(page: page, staffs: geometries, model: model)
@@ -245,8 +260,11 @@ enum LocalTextReader {
     let letters = text.filter(\.isLetter)
     // a single letter on its own is a word only as a, I or O
     if letters.count == 1 && !syllable && !["a", "i", "o"].contains(letters.lowercased()) { return false }
-    // a chord name, unless it is also a word
-    if letters.count >= 1, !["a", "i", "am", "be", "do", "go", "ad"].contains(bare),
+    // a chord name, unless it is also a word, or a syllable of letters hyphenated to the next ("E - del - weiss",
+    // "Em - 'rald"); with a number, sharp or flat ("Bm7 - E7", "Bb") it is chords
+    let core = text.trimmingCharacters(in: .punctuationCharacters)
+    let spelled = syllable && core.allSatisfy(\.isLetter) && !core.dropFirst().hasPrefix("b")
+    if letters.count >= 1, !spelled, !["a", "i", "am", "be", "do", "go", "ad"].contains(bare),
       ChordText.normalizedSymbol(text.trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!?"))) != nil {
       return false
     }
@@ -276,7 +294,8 @@ enum LocalTextReader {
   /// the hyphens around it (a hyphen ending a line carries over to the next line of the same verse). A word that
   /// reads as no word, or as navigation, is dropped.
   static func readLyrics(
-    _ words: [LyricFinder.Word], page: LocalChordReader.Image, model: LocalChordReader.Model, chords: [Box] = []
+    _ words: [LyricFinder.Word], page: LocalChordReader.Image, model: LocalChordReader.Model, chords: [Box] = [],
+    sung: (LyricFinder.Word, String) -> Void = { _, _ in }
   ) throws -> [ScoreLyric] {
     // line by line, top to bottom, each line left to right
     let lines = Dictionary(grouping: words) { "\($0.staff) \($0.verse)" }.values
@@ -324,6 +343,7 @@ enum LocalTextReader {
           hyphenBefore = false
           continue
         }
+        sung(w, text)
         // a word read with a hyphen inside, over as many notes: one syllable each
         var parts = [text]
         let pieces = text.split(separator: "-").map(String.init).filter { !$0.isEmpty }
@@ -438,7 +458,8 @@ enum LocalTextReader {
   static func phrases(
     page: LocalChordReader.Image, rows: Range<Int>, cols: Range<Int>, sp: Double, tallest: Double = 8
   ) -> [Box] {
-    let rows = max(0, rows.lowerBound)..<min(page.height, rows.upperBound)
+    let lo = min(page.height, max(0, rows.lowerBound))
+    let rows = lo..<max(lo, min(page.height, rows.upperBound))
     guard rows.count > 2, cols.count > 2 else { return [] }
     let w = cols.count, h = rows.count
     var mask = [Bool](repeating: false, count: w * h)

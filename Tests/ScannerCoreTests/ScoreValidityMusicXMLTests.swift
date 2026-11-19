@@ -22,6 +22,25 @@ struct ScoreValidityMusicXMLTests {
     let opening = m.children.prefix { $0.tag != "note" }.filter { $0.tag == "attributes" }
     #expect(opening.contains { $0.first("time")?.first("beats")?.text == "6" })
   }
+  @Test func pageJoinDropsRestatedClefsKeyAndMeter() throws {
+    func page(_ clef: String) -> Data {
+      Data("""
+        <score-partwise><part-list><score-part id="P1"><part-name>P</part-name></score-part></part-list>
+        <part id="P1"><measure number="1"><attributes><divisions>1</divisions><key><fifths>0</fifths></key>
+        <time><beats>3</beats><beat-type>4</beat-type></time><clef><sign>\(clef)</sign><line>2</line></clef></attributes>
+        <note><pitch><step>C</step><octave>5</octave></pitch><duration>3</duration><voice>1</voice><type>half</type><dot/></note>
+        </measure></part></score-partwise>
+        """.utf8)
+    }
+    let root = try XMLNode.parse(CopistaMerge.combine([page("G"), page("G"), page("C")]))
+    let bars = root.first("part")!.all("measure")
+    #expect(bars[0].first("attributes")?.first("clef") != nil)
+    // page 2 states what is in force: only its divisions stay
+    #expect(bars[1].first("attributes")?.children.map(\.tag) == ["divisions"])
+    // page 3 changes the clef: the change stays
+    #expect(bars[2].first("attributes")?.children.map(\.tag) == ["divisions", "clef"])
+  }
+
   @Test func validFileIsByteIdentical() throws {
     let xml = score("<measure number=\"1\">\(attributes)\(note(duration: 48, type: "whole", tuplet: false))</measure>")
     #expect(try ScoreValidityMusicXML.apply(xml) == xml)

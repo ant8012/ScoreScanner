@@ -253,6 +253,7 @@ extension CopistaMerge {
     let at = first.children.firstIndex { !["work", "movement-number", "movement-title", "identification", "defaults",
                                            "credit"].contains($0.tag) } ?? first.children.count
     first.children.insert(plist, at: at)
+    dropRestated(parts)
     first.children += parts
     if !title.isEmpty && first.first("work") == nil {
       first.children.insert(XMLNode("work", children: [XMLNode("work-title", text: title)]), at: 0)

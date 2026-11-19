@@ -20,6 +20,9 @@ struct LyricTests {
     #expect(!LocalTextReader.lyricWord("F#sus"))
     #expect(!LocalTextReader.lyricWord("Bb"))
     #expect(LocalTextReader.lyricWord("Am"))   // a word as well as a chord
+    #expect(LocalTextReader.lyricWord("E", syllable: true))   // E-del-weiss: a syllable, not the chord E
+    #expect(!LocalTextReader.lyricWord("Bm7", syllable: true))   // "Bm7 - E7" is a chord line
+    #expect(!LocalTextReader.lyricWord("Bb", syllable: true))
   }
 
   @Test func readingsAreTidied() {
