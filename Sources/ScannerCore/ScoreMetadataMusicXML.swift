@@ -141,7 +141,9 @@ public enum ScoreMetadataMusicXML {
 
   private static func insertPartNames(_ names: [String], abbreviations: [String], into root: XMLNode) {
     let parts = root.first("part-list")?.all("score-part") ?? []
-    guard names.count == parts.count else { return }
+    guard !parts.isEmpty else { return }
+    // no names read: still each part's transposition from its key
+    let names = names.count == parts.count ? names : [String](repeating: "", count: parts.count)
     let shorts = abbreviations.count == parts.count ? abbreviations : [String](repeating: "", count: parts.count)
     // each part's instrument by name, and its key signature in the first bar
     let found = parts.indices.map { k -> InstrumentSounds.Match? in
@@ -155,9 +157,23 @@ public enum ScoreMetadataMusicXML {
     // the concert key: the commonest among the parts that sound as written (piano, bass, trombones, strings)
     let concertKeys = parts.indices.filter { found[$0].map { InstrumentSounds.soundsAsWritten($0.sound) } ?? false }
       .map { fifths[$0] }
-    let concert = Dictionary(grouping: concertKeys, by: { $0 }).max { a, b in
+    let commonest = Dictionary(grouping: concertKeys, by: { $0 }).max { a, b in
       (a.value.count, -abs(a.key)) < (b.value.count, -abs(b.key))
-    }?.key
+    }
+    let concert = commonest?.key
+    // a part whose name is not known, in a key a B♭, E♭ or F instrument would be written in against a concert key
+    // two parts agree on: transposed (pitch right; the octave is the commoner instrument's, a trumpet's, an alto
+    // sax's, a horn's). Drums carry no key and are left alone. Key signatures are compared, so clefs don't matter.
+    if let commonest, commonest.value.count >= 2 {
+      for (k, part) in parts.enumerated() where found[k] == nil {
+        guard let id = part.attributes["id"],
+          let music = root.all("part").first(where: { $0.attributes["id"] == id }),
+          !(music.first("measure")?.first("attributes")?.all("clef").contains { $0.first("sign")?.text == "percussion" } ?? false),
+          let t = InstrumentSounds.transposition(writtenAgainstConcert: fifths[k] - commonest.key)
+        else { continue }
+        insertTranspose(t, part: id, into: root)
+      }
+    }
     for (k, part) in parts.enumerated() {
       guard let name = cleaned(names[k]), let partName = part.first("part-name"),
         var at = part.children.firstIndex(where: { $0 === partName })

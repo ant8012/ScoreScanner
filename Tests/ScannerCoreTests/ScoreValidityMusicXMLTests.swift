@@ -41,6 +41,22 @@ struct ScoreValidityMusicXMLTests {
     #expect(bars[2].first("attributes")?.children.map(\.tag) == ["divisions", "clef"])
   }
 
+  @Test func aPageWithTheFirstPagesPartsJoinsThemInOrder() throws {
+    // three single-staff parts; the drums read in treble clef on page 2, and page 3 shows two parts
+    func page(_ clefs: [String]) -> Data {
+      let list = clefs.indices.map { #"<score-part id="P\#($0 + 1)"><part-name>Part</part-name></score-part>"# }.joined()
+      let parts = clefs.enumerated().map { k, c in
+        #"<part id="P\#(k + 1)"><measure number="1"><attributes><divisions>1</divisions><clef><sign>\#(c)</sign></clef></attributes><note><rest/><duration>4</duration><voice>1</voice></note></measure></part>"#
+      }.joined()
+      return Data("<score-partwise><part-list>\(list)</part-list>\(parts)</score-partwise>".utf8)
+    }
+    let (xml, _) = try CopistaMerge.combine([page(["G", "F", "percussion"]), page(["G", "F", "G"]), page(["G", "F"])],
+                                            labels: [["Alto Sax", "Trombone", "Drums"], ["A. Sx.", "TH TBN", "DeumS"], ["", ""]])
+    let root = try XMLNode.parse(xml)
+    #expect(root.all("part").count == 3)
+    #expect(root.all("part").allSatisfy { $0.all("measure").count == 3 })
+  }
+
   @Test func validFileIsByteIdentical() throws {
     let xml = score("<measure number=\"1\">\(attributes)\(note(duration: 48, type: "whole", tuplet: false))</measure>")
     #expect(try ScoreValidityMusicXML.apply(xml) == xml)

@@ -121,6 +121,18 @@ enum InstrumentSounds {
     "brass.french-horn": [(1, "brass.french-horn", -4, -7), (3, "brass.french-horn", -5, -9)],
   ]
 
+  /// The transposition of an instrument not known by name, from how many fifths its key is written above the
+  /// concert key: a B♭ instrument (2) as a trumpet, an E♭ one (3) as an alto sax, an F one (1) as a horn. Any other
+  /// interval is no transposition the scanner can tell.
+  static func transposition(writtenAgainstConcert fifths: Int) -> (diatonic: Int, chromatic: Int)? {
+    switch ((fifths % 12 + 18) % 12) - 6 {
+    case 2: return (-1, -2)
+    case 3: return (-5, -9)
+    case 1: return (-4, -7)
+    default: return nil
+    }
+  }
+
   /// Whether a part playing `sound` sounds as written, so its key signature is the score's concert key.
   static func soundsAsWritten(_ sound: String) -> Bool {
     !sound.hasPrefix("drum.") && byKey[sound] == nil && sound != "wind.reed.saxophone"
@@ -156,7 +168,8 @@ enum InstrumentSounds {
   /// The name without the part's number: a trailing Roman numeral or number ("Violin II", "Horn 3") or a
   /// leading ordinal ("2nd Violin"). Left alone when nothing would be left.
   static func base(_ name: String) -> String {
-    var words = name.split(whereSeparator: \.isWhitespace).map(String.init)
+    // "TPT.1": the number after a dot is a word of its own
+    var words = name.replacingOccurrences(of: ".", with: ". ").split(whereSeparator: \.isWhitespace).map(String.init)
     let trailing: Set<String> = ["i", "ii", "iii", "iv", "v", "vi", "1", "2", "3", "4", "5", "6"]
     let leading: Set<String> = ["1st", "2nd", "3rd", "4th", "first", "second", "third", "fourth"]
     if words.count > 1, let w = words.last, trailing.contains(w.lowercased().trimmingCharacters(in: .punctuationCharacters)) {
@@ -198,9 +211,48 @@ enum InstrumentSounds {
     return names[k] != nil || keyed[k] != nil || k == "bass"
   }
 
-  /// The instrument for a part from its printed long name, else its short name. "Bass" is a voice beside other
-  /// voices and a double bass beside other strings, otherwise unknown.
-  static func match(long: String, short: String, others: [String] = []) -> Match? {
+  /// Names found inside a longer one, longest first ("2ND TROMBONE" cut to "NO TROMBONE", "E♭ ALTO SAXOPHONE" read
+  /// as "E ALTO SAXOPHONE"): instruments and their abbreviations of three letters or more, not voices ("Alto",
+  /// "Tenor" and "Bass" alone are choir parts or anything) nor a bare "sax".
+  private static let contained: [(words: [String], sound: String)] = names
+    .filter { name, sound in !sound.hasPrefix("voice.") && name.count >= 3 && name != "sax" && name != "saxophone" }
+    .map { (words: $0.key.split(separator: " ").map(String.init), sound: $0.value) }
+    .sorted { ($0.words.count, $0.words.joined().count) > ($1.words.count, $1.words.joined().count) }
+
+  /// The instrument whose name stands as whole words inside `printed`, the longest such name, and the earliest of
+  /// equals (a doubling part, "Tenor Sax / Flute", is the instrument printed first). The printed key is not used:
+  /// transposition comes from the key signatures.
+  static func containedMatch(_ printed: String) -> Match? {
+    let words = key(printed).split { !$0.isLetter && !$0.isNumber && $0 != "#" }.map(String.init)
+    guard !words.isEmpty else { return nil }
+    var best: (at: Int, length: Int, sound: String, name: [String])?
+    for c in contained {
+      guard c.words.count <= words.count else { continue }
+      for at in 0...(words.count - c.words.count) where Array(words[at..<at + c.words.count]) == c.words {
+        let better = best == nil || c.words.count > best!.length || c.words.count == best!.length && at < best!.at
+        if better { best = (at, c.words.count, c.sound, c.words) }
+        break
+      }
+    }
+    guard let best else { return nil }
+    return Match(sound: best.sound, name: best.name.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " "),
+                 transpose: nil)
+  }
+
+  /// The instrument for a part from its printed long name, else its short name, else an instrument's name found
+  /// inside either. "Bass" is a voice beside other voices and a double bass beside other strings, otherwise unknown.
+  /// `contained` false: exact names only (for matching parts across pages, where a label holding two staves' names,
+  /// "Clarinet 2 Bass Clarinet 3", would name the wrong one).
+  static func match(long: String, short: String, others: [String] = [], contained: Bool = true) -> Match? {
+    if let exact = exactMatch(long: long, short: short, others: others) { return exact }
+    guard contained else { return nil }
+    for printed in [long, short] where !printed.trimmingCharacters(in: .whitespaces).isEmpty {
+      if let found = containedMatch(printed) { return found }
+    }
+    return nil
+  }
+
+  private static func exactMatch(long: String, short: String, others: [String]) -> Match? {
     for printed in [long, short] where !printed.trimmingCharacters(in: .whitespaces).isEmpty {
       let name = base(printed)
       let k = key(name)

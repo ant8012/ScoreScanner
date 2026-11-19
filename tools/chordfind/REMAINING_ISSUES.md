@@ -25,11 +25,13 @@ Parked for later; not started. Seen Nov 19 2026 on 0.1.21.
 | An accidental read as a key change (3 sharps for 2) | Candy, twice | wrong key for a bar or line |
 | A part's page-2 header ("ALTO 2", "CANDY") read as staff text | Candy | stray text in the music |
 | Octave-transposing instruments (guitar, bass guitar, double bass, piccolo) play at written pitch | any score naming them | guitar and bass an octave high |
-| "Bass" in a band (beside guitar, drums, saxes) gets no instrument | Just the Way You Are | default sound |
+| "Bass" in a band (beside guitar, drums, saxes) gets no instrument, or a choir bass beside a "Vocal" part | Just the Way You Are, The Lady Is a Tramp | default or wrong sound |
 | A trumpet or clarinet part on its own (nothing to compare keys with) is not transposed | lone parts | plays at written pitch |
+| Instrument names in Italian, French or German not recognised ("Flauto", "Fagotti", "Corno", "Violino", "Clarinetti in B") | Mozart 40 | default sound (transposition still comes from the key signatures) |
+| Two staves of one page read as one two-staff part (Lady's 2nd and 3rd trombones on page 1) | The Lady Is a Tramp, page 1 | one extra part at that page turn |
 | Part names with the key in front in short forms ("B♭ Tenor Sax", "E♭ Alto Sax", "E♭ Bari Sax") not recognised; Jack: leave it, the printed key is often missing or wrong. Idea to try: a name that contains "soprano/alto/tenor/bari/baritone sax(ophone)" is that sax (longest phrase wins, printed key ignored); saxes only for now | lone parts | no instrument, no transposition |
 | A bass note missed or misread, differently on the Mac and the phone | Edelweiss bars 25 and 30 | wrong or missing note |
-| Real Book lines still read as percussion after the clef fix (a short mark taken for a percussion clef) | nrb1 p.426, p.255, p.68, p.365, rb6 p.226 (194 notes) | notes become drum hits |
+| Real Book lines still read as percussion: one page left after 0.1.23 (a page's first bar where the reader guessed percussion, in a lead sheet the 0.9 rule does not reach) | rb6 p.226 (47 notes) | notes become drum hits |
 | A continuation page with no clef takes the reader's guess for its first bars | nrb2 p.148 (bass clef until a printed treble clef in bar 10) | wrong octave/clef for a few bars |
 | Rubber stamps and page-2 headers on old photocopies (band name, owner's address) read as staff text | Girl from Ipanema ("HELSINGBORGS STORBAND", "SLATTERGATAN 3", "3ALTD SAX") | stray text in the music |
 | A boxed rehearsal letter beside a word read together ("C" + "SOLI" → "CSOLI") | Girl from Ipanema | wrong text, rehearsal mark missing |

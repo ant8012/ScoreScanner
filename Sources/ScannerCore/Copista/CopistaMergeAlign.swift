@@ -29,7 +29,7 @@ extension CopistaMerge {
       .map { String(($0.first("sign")?.text ?? "?").prefix(1)) }.joined()
     let trimmed = label.trimmingCharacters(in: .whitespaces)
     var family: String?
-    if let m = InstrumentSounds.match(long: trimmed, short: "") {
+    if let m = InstrumentSounds.match(long: trimmed, short: "", contained: false) {
       // the instrument, without its key or size: "Clarinet in A" and "Cl." are one family
       family = m.sound.split(separator: ".").prefix(3).joined(separator: ".")
     } else if let sound = InstrumentSounds.nearest(trimmed) {
@@ -47,7 +47,9 @@ extension CopistaMerge {
     guard let first = sigs.first else { return true }
     for page in sigs.dropFirst() {
       if page.count > first.count { return false }
-      for (a, b) in zip(first, page) where a.staves != b.staves || (!a.clefs.isEmpty && !b.clefs.isEmpty && a.clefs != b.clefs) {
+      // as many parts as the first page, with the same staves: the same parts, whatever their clefs or names were
+      // read as
+      for (a, b) in zip(first, page) where a.staves != b.staves {
         return false
       }
       if page.count < first.count { return false }
@@ -114,8 +116,15 @@ extension CopistaMerge {
       // a page of one unnamed part is the top line going on, whatever its clef (a lead sheet's bass line); the
       // part keeps the clefs it is known by
       let lone = p > 0 && page.count == 1 && page[0].family == nil && page[0].staves <= seen[order[0]]!.staves
+      // the latest page laid out alike (as many parts, with the same staves): its parts in its order, whatever
+      // their names and clefs were read as. The latest, not the first: a condensed score drops parts as it goes,
+      // and one page read with two staves joined into one part sets only its own page matching by name.
+      let alike = p == 0 ? nil : (0..<p).last { q in
+        sigs[q].count == page.count && zip(page, sigs[q]).allSatisfy { $0.staves == $1.staves }
+      }
       let found = p == 0 ? [Int?](repeating: nil, count: page.count)
-        : lone ? [0] : alignParts(order.map { seen[$0]! }, page)
+        : alike.map { q in maps[q].map { id in id.flatMap { order.firstIndex(of: $0) } } }
+        ?? (lone ? [0] : alignParts(order.map { seen[$0]! }, page))
       var map = [Int?](repeating: nil, count: page.count)
       let matched = found.map { $0.map { order[$0] } }   // before new parts shift the order
       var at = 0                              // insert new parts after the last matched one
@@ -124,8 +133,17 @@ extension CopistaMerge {
           map[k] = id
           var s = sig
           if seen[id]!.staves > s.staves || lone { s.staves = seen[id]!.staves; s.clefs = seen[id]!.clefs }
-          if s.family == nil { s.family = seen[id]!.family; s.number = seen[id]!.number }
-          if s.label.isEmpty { s.label = seen[id]!.label }
+          // the part keeps the name it was first known by, unless that names no instrument and this one does (the
+          // first page's long names over a later page's short ones: "E♭ Alto Saxophone", not "Alto 1")
+          let known = seen[id]!
+          let instrument = { (f: String?) in f.map { !$0.hasPrefix("voice.") } ?? false }
+          if !known.label.isEmpty && !(instrument(s.family) && !instrument(known.family)) {
+            s.label = known.label
+            s.family = known.family ?? s.family
+            s.number = known.number ?? s.number
+          }
+          if s.family == nil { s.family = known.family; s.number = known.number }
+          if s.label.isEmpty { s.label = known.label }
           seen[id] = s
           at = order.firstIndex(of: id)! + 1
         } else {

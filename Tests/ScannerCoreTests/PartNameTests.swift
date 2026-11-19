@@ -80,7 +80,7 @@ struct PartNameTests {
     // the short name when no long one was read
     #expect(InstrumentSounds.match(long: "", short: "Vla.")?.sound == "strings.viola")
     // not in the table, or only part of a name: no guess
-    #expect(InstrumentSounds.match(long: "Violin obbligato", short: "") == nil)
+    #expect(InstrumentSounds.match(long: "Violin obbligato", short: "")?.sound == "strings.violin")
     #expect(InstrumentSounds.match(long: "Melody", short: "") == nil)
   }
 
@@ -137,5 +137,32 @@ struct PartNameTests {
     #expect(try transposes(["Alto Sax"], keys: [2]) == ["-9"])
     // a clarinet a minor third below the strings is in A
     #expect(try transposes(["Clarinet", "Violin"], keys: [-3, 0]) == ["-3", nil])
+  }
+
+  @Test func instrumentNamesInsideLongerNames() {
+    func sound(_ n: String) -> String? { InstrumentSounds.match(long: n, short: "")?.sound }
+    // a cut or misread page edge: the instrument's whole word is still there
+    #expect(sound("NO TROMBONE") == "brass.trombone")
+    #expect(sound("E ALTO SAXOPHONE") == "wind.reed.saxophone.alto")
+    #expect(sound("TH BI TRUMPET") == "brass.trumpet")
+    // the longest name wins; "bass" is not inside "Bassoon"
+    #expect(sound("2nd Bass Trombone") == "brass.trombone.bass")
+    #expect(sound("Bb Bass Clarinet") == "wind.reed.clarinet.bass")
+    #expect(sound("Bassoon II") == "wind.reed.bassoon")
+    // a doubling part is the instrument printed first
+    #expect(sound("Tenor Sax / Flute") == "wind.reed.saxophone.tenor")
+    // a number right after the dot
+    #expect(sound("TPT.1") == "brass.trumpet")
+    // voices only on their own; no guess from other words
+    #expect(sound("ALTO 1") == "voice.alto")
+    #expect(sound("Alto and Tenor") == nil)
+    #expect(sound("Melody") == nil)
+  }
+
+  @Test func anUnnamedPartTransposesByItsKeyAgainstTheConcertParts() throws {
+    // piano and bass agree on 2 flats; an unreadable name in 1 sharp is an E♭ instrument, one in C a B♭ one
+    #expect(try transposes(["Piano", "Bass Guitar", "~~", "", "Trombone"], keys: [-2, -2, 1, 0, -2]) == [nil, nil, "-9", "-2", nil])
+    // one concert part alone is not enough to go by
+    #expect(try transposes(["Piano", "~~"], keys: [-2, 1]) == [nil, nil])
   }
 }

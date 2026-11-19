@@ -575,41 +575,34 @@ extension Copista {
     /// further along, which moves the change bars early (and with it every accidental between). The clef likewise
     /// changes only where a clef is printed: old parts print one on the first line only, and the reader guessed
     /// an alto clef for some of the bare lines. A staff's first bar takes the reader's key and clef as they are.
-    static func barState(_ rd: Reading, _ staff: Int, _ bar: Int, _ prev: BarState, first: Bool = false) -> BarState {
+    static func barState(_ rd: Reading, _ staff: Int, _ bar: Int, _ prev: BarState, first: Bool = false,
+                         ensemble: Bool = true) -> BarState {
       var state = prev
       if let r = rd.tok[rd.layout.staves[staff].bars[bar]], r.hasBarHeads {
         if let k = r.key, first || k == prev.key || keySignatureSeen(rd, staff, bar) { state.key = k }
         if let t = r.time { state.time = t }
         if let c = r.clef {
-          // into percussion only on a percussion clef seen; any other change where a clef is printed
-          let seen = c == "perc" && prev.clef != "perc"
-            ? percussionClefSeen(rd, staff, bar) : first || c == prev.clef || clefSeen(rd, staff, bar, to: c)
+          // a page's first bar takes the reader's clef, but a lead sheet's (one or two parts) only turns into
+          // percussion on a sure percussion clef: its bare first lines were read as drums
+          let seen = c == prev.clef || clefSeen(rd, staff, bar, to: c)
+            || first && (c != "perc" || ensemble)
           if seen { state.clef = seenClef(rd, staff, bar, c) }
         }
       }
       return state
     }
 
-    /// Whether a clef is printed in the bar for a change to `to`: a pitched clef for a pitched one, a percussion
-    /// clef for percussion.
+    /// The detector's surest bar line taken for a percussion clef (a Real Book's hand-drawn "‖:" at 0.85); real
+    /// ones read 0.92-0.95. In an ensemble a drum staff's small clef can be missed or misread on later pages, so a
+    /// part's first bar there takes the reader's clef as it is.
+    static let percussionClefP = 0.9
+
+    /// Whether a clef is printed in the bar for a change to `to`: a pitched clef for a pitched one, a sure
+    /// percussion clef for percussion.
     static func clefSeen(_ rd: Reading, _ staff: Int, _ bar: Int, to: String) -> Bool {
-      to == "perc" ? percussionClefSeen(rd, staff, bar) : rd.layout.syms.contains { s in
+      rd.layout.syms.contains { s in
         s.staff == staff && s.bar == bar && isReal(rd, s.i) && family(cls(rd, s.i)) == "clef"
-          && clefOfCls(cls(rd, s.i)) != "perc"
-      }
-    }
-
-    /// The tallest a percussion clef stands, in staff spaces. Its two strokes stand in the middle of the staff
-    /// (2 spaces in engraved scores); the bar line opening a line ("‖", "‖:") spans the staff and was taken for one
-    /// (at 3.7-4 spaces, up to 0.85 sure, on Real Book and photocopied pages).
-    static let percussionClefTallest = 3.0
-
-    /// Whether a percussion clef is printed in the bar, and not a bar line taken for one.
-    static func percussionClefSeen(_ rd: Reading, _ staff: Int, _ bar: Int) -> Bool {
-      let sp = rd.layout.staves[staff].sp
-      return rd.layout.syms.contains { s in
-        s.staff == staff && s.bar == bar && isReal(rd, s.i) && clefOfCls(cls(rd, s.i)) == "perc"
-          && s.box.3 - s.box.1 <= percussionClefTallest * sp
+          && (to == "perc" ? clefOfCls(cls(rd, s.i)) == "perc" && s.p >= percussionClefP : clefOfCls(cls(rd, s.i)) != "perc")
       }
     }
 
@@ -1708,7 +1701,7 @@ extension Copista {
               let cols = sy.columns[sy.staves.firstIndex(of: staff)!]
               let bars = cols.indices.filter { cols[$0] == c }
               guard let j = bars.first else { m.append(nil); continue }
-              state[ki] = barState(rd, staff, j, state[ki], first: first[ki])
+              state[ki] = barState(rd, staff, j, state[ki], first: first[ki], ensemble: plans.count >= 3)
               if first[ki] {
                 first[ki] = false
                 if let opening { state[ki].time = opening }
