@@ -143,6 +143,21 @@ public enum ScoreMetadataMusicXML {
     let parts = root.first("part-list")?.all("score-part") ?? []
     guard names.count == parts.count else { return }
     let shorts = abbreviations.count == parts.count ? abbreviations : [String](repeating: "", count: parts.count)
+    // each part's instrument by name, and its key signature in the first bar
+    let found = parts.indices.map { k -> InstrumentSounds.Match? in
+      guard let name = cleaned(names[k]) else { return nil }
+      return InstrumentSounds.match(long: name, short: shorts[k], others: names.indices.filter { $0 != k }.map { names[$0] })
+    }
+    let fifths = parts.map { part -> Int in
+      let music = root.all("part").first { $0.attributes["id"] == part.attributes["id"] }
+      return Int(music?.first("measure")?.first("attributes")?.first("key")?.first("fifths")?.text ?? "") ?? 0
+    }
+    // the concert key: the commonest among the parts that sound as written (piano, bass, trombones, strings)
+    let concertKeys = parts.indices.filter { found[$0].map { InstrumentSounds.soundsAsWritten($0.sound) } ?? false }
+      .map { fifths[$0] }
+    let concert = Dictionary(grouping: concertKeys, by: { $0 }).max { a, b in
+      (a.value.count, -abs(a.key)) < (b.value.count, -abs(b.key))
+    }?.key
     for (k, part) in parts.enumerated() {
       guard let name = cleaned(names[k]), let partName = part.first("part-name"),
         var at = part.children.firstIndex(where: { $0 === partName })
@@ -153,11 +168,9 @@ public enum ScoreMetadataMusicXML {
         at += 1
         part.children.insert(XMLNode("part-abbreviation", text: short), at: at)
       }
-      // the instrument the name stands for, so the part plays with its sound
-      let others = names.indices.filter { $0 != k }.map { names[$0] }
-      guard part.first("score-instrument") == nil,
-        let found = InstrumentSounds.match(long: name, short: shorts[k], others: others), let id = part.attributes["id"]
-      else { continue }
+      // the instrument the name stands for, so the part plays with its sound, transposed as its key shows
+      guard part.first("score-instrument") == nil, let named = found[k], let id = part.attributes["id"] else { continue }
+      let found = InstrumentSounds.transposition(of: named, written: fifths[k], concert: concert)
       let after = part.children.lastIndex { $0.tag == "part-name" || $0.tag == "part-abbreviation" } ?? at
       part.children.insert(
         XMLNode("score-instrument", attributes: ["id": "\(id)-I1"], children: [

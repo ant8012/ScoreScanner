@@ -12,6 +12,25 @@ struct PartNameTests {
     return DocumentScanResult(xml: xml, rawXML: xml, seconds: 1, staffCount: parts, repairedMeasures: 0, pageCount: 1)
   }
 
+  /// Parts whose first bars carry these key signatures (in fifths).
+  private func score(keys: [Int]) -> DocumentScanResult {
+    let list = keys.indices.map { #"<score-part id="P\#($0 + 1)"><part-name print-object="no">Part \#($0 + 1)</part-name></score-part>"# }
+    let body = keys.enumerated().map { k, f in
+      #"<part id="P\#(k + 1)"><measure number="1"><attributes><key><fifths>\#(f)</fifths></key></attributes><note><duration>4</duration></note></measure></part>"#
+    }
+    let xml = Data("<score-partwise><part-list>\(list.joined())</part-list>\(body.joined())</score-partwise>".utf8)
+    return DocumentScanResult(xml: xml, rawXML: xml, seconds: 1, staffCount: keys.count, repairedMeasures: 0, pageCount: 1)
+  }
+
+  private func transposes(_ names: [String], keys: [Int]) throws -> [String?] {
+    let result = try ScoreMetadataMusicXML.insertingRecognizedContent(
+      title: nil, composer: nil, arranger: nil, partNames: names, partAbbreviations: [], staffText: [],
+      into: score(keys: keys))
+    return try XMLNode.parse(result.xml).all("part").map {
+      $0.first("measure")?.first("attributes")?.first("transpose")?.first("chromatic")?.text
+    }
+  }
+
   private func written(_ result: DocumentScanResult) throws -> [(name: String, shown: Bool, short: String?)] {
     try XMLNode.parse(result.xml).first("part-list")!.all("score-part").map { p in
       let n = p.first("part-name")!
@@ -95,5 +114,28 @@ struct PartNameTests {
     let transposes = root.all("part").map { $0.first("measure")?.first("attributes")?.first("transpose") }
     #expect(transposes[0] == nil && transposes[2] == nil)
     #expect(transposes[1]?.first("chromatic")?.text == "-2")
+  }
+
+  @Test func aBigBandScoreTransposesByItsKeySignatures() throws {
+    // Ab major at concert pitch: altos and bari in F (E♭ instruments), tenors and trumpets in B♭
+    let t = try transposes(["Altsax 1", "Tensax 1", "Bar sax", "Tpt 1", "Tbn 1", "Piano", "Bass", "Drum Kit"],
+                           keys: [-1, -2, -1, -2, -4, -4, -4, -4])
+    #expect(t == ["-9", "-14", "-21", "-2", nil, nil, nil, nil])
+  }
+
+  @Test func aScoreAtConcertPitchIsPlayedAsWritten() throws {
+    // every part in the same key: printed at concert pitch, whatever the names say
+    let t = try transposes(["Alto Sax", "Clarinet in B♭", "Piano"], keys: [-4, -4, -4])
+    #expect(t == [nil, nil, nil])
+  }
+
+  @Test func keySignaturesSayNothingWithoutSharpsOrFlats() throws {
+    // no key signatures anywhere: a printed key still counts, a saxophone is in its usual key, a plain trumpet stays
+    let t = try transposes(["Clarinet in B♭", "Alto Saxophone", "Trumpet", "Violin"], keys: [0, 0, 0, 0])
+    #expect(t == ["-2", "-9", nil, nil])
+    // a saxophone part on its own
+    #expect(try transposes(["Alto Sax"], keys: [2]) == ["-9"])
+    // a clarinet a minor third below the strings is in A
+    #expect(try transposes(["Clarinet", "Violin"], keys: [-3, 0]) == ["-3", nil])
   }
 }

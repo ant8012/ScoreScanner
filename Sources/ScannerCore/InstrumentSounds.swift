@@ -5,8 +5,10 @@ import Foundation
 /// the table exactly once a trailing part number is dropped ("Violin I", "Trumpet 2", "2nd Violin"): anything else
 /// keeps the default sound, so an unusual name is never guessed.
 ///
-/// A transposing instrument is transposed only when its key is printed ("Clarinet in B♭", "Horn in F"): the
-/// scanner reads the printed notes, and a plain "Clarinet" may be in B♭, A or C.
+/// A transposing instrument is transposed when its key is printed ("Clarinet in B♭", "Horn in F"), or when its key
+/// signature stands a known interval from the parts that sound as written (`transposition(of:written:concert:)`):
+/// the scanner reads the printed notes, and a plain "Clarinet" may be in B♭, A or C. A saxophone with nothing to
+/// compare against is in its usual key, as saxophones nearly always are.
 enum InstrumentSounds {
   struct Match: Equatable {
     var sound: String
@@ -45,7 +47,14 @@ enum InstrumentSounds {
     "tenor saxophone": "wind.reed.saxophone.tenor", "tenor sax": "wind.reed.saxophone.tenor",
     "t sax": "wind.reed.saxophone.tenor",
     "baritone saxophone": "wind.reed.saxophone.baritone", "baritone sax": "wind.reed.saxophone.baritone",
-    "bari sax": "wind.reed.saxophone.baritone",
+    "bari sax": "wind.reed.saxophone.baritone", "bar sax": "wind.reed.saxophone.baritone",
+    "bari": "wind.reed.saxophone.baritone",
+    // German and score shorthand ("Altsax 1", "Tensax", "E-Git.", "Psn.", "D. Kit")
+    "altsax": "wind.reed.saxophone.alto", "altsaxophon": "wind.reed.saxophone.alto",
+    "tensax": "wind.reed.saxophone.tenor", "tenorsax": "wind.reed.saxophone.tenor",
+    "tenorsaxophon": "wind.reed.saxophone.tenor", "barsax": "wind.reed.saxophone.baritone",
+    "baritonsax": "wind.reed.saxophone.baritone", "baritonsaxophon": "wind.reed.saxophone.baritone",
+    "posaune": "brass.trombone", "pos": "brass.trombone", "psn": "brass.trombone", "trompete": "brass.trumpet",
     // brass
     "horn": "brass.french-horn", "french horn": "brass.french-horn", "hn": "brass.french-horn",
     "trumpet": "brass.trumpet", "tpt": "brass.trumpet", "cornet": "brass.cornet", "flugelhorn": "brass.flugelhorn",
@@ -62,11 +71,16 @@ enum InstrumentSounds {
     // plucked
     "guitar": "pluck.guitar", "gtr": "pluck.guitar", "acoustic guitar": "pluck.guitar.acoustic",
     "electric guitar": "pluck.guitar.electric", "bass guitar": "pluck.bass.electric",
-    "electric bass": "pluck.bass.electric", "harp": "pluck.harp", "hp": "pluck.harp", "hrp": "pluck.harp", "banjo": "pluck.banjo",
+    "electric bass": "pluck.bass.electric", "el guitar": "pluck.guitar.electric", "e guitar": "pluck.guitar.electric",
+    "e-git": "pluck.guitar.electric", "e-gitarre": "pluck.guitar.electric", "gitarre": "pluck.guitar",
+    "e-bass": "pluck.bass.electric", "harp": "pluck.harp", "hp": "pluck.harp", "hrp": "pluck.harp", "banjo": "pluck.banjo",
     "mandolin": "pluck.mandolin", "ukulele": "pluck.ukulele",
     // pitched percussion
     "vibraphone": "mallet.vibraphone", "marimba": "mallet.marimba", "xylophone": "mallet.xylophone",
     "glockenspiel": "mallet.glockenspiel", "timpani": "drum.timpani", "timp": "drum.timpani",
+    // drums
+    "drums": "drum.group.set", "drum kit": "drum.group.set", "drum set": "drum.group.set", "drumset": "drum.group.set",
+    "d kit": "drum.group.set", "schlagzeug": "drum.group.set",
   ]
 
   /// Instruments in a printed key: name with its key → (sound, diatonic, chromatic), written to sounding pitch.
@@ -84,7 +98,54 @@ enum InstrumentSounds {
     "alto saxophone in eb": ("wind.reed.saxophone.alto", -5, -9), "eb alto saxophone": ("wind.reed.saxophone.alto", -5, -9),
     "tenor saxophone in bb": ("wind.reed.saxophone.tenor", -8, -14), "bb tenor saxophone": ("wind.reed.saxophone.tenor", -8, -14),
     "baritone saxophone in eb": ("wind.reed.saxophone.baritone", -12, -21),
+    // German names B for B♭ ("Tpt. in B")
+    "trumpet in b": ("brass.trumpet.bflat", -1, -2), "tpt in b": ("brass.trumpet.bflat", -1, -2),
+    "trompete in b": ("brass.trumpet.bflat", -1, -2), "clarinet in b": ("wind.reed.clarinet.bflat", -1, -2),
+    "klarinette in b": ("wind.reed.clarinet.bflat", -1, -2),
   ]
+
+  /// Transposing instruments by the interval their key signature stands from the parts that sound as written, in
+  /// fifths (a B♭ instrument is written two sharps up) → (sound, diatonic, chromatic) written to sounding pitch.
+  /// The first entry is a saxophone's usual key.
+  private static let byKey: [String: [(fifths: Int, sound: String, diatonic: Int, chromatic: Int)]] = [
+    "wind.reed.saxophone.soprano": [(2, "wind.reed.saxophone.soprano", -1, -2)],
+    "wind.reed.saxophone.alto": [(3, "wind.reed.saxophone.alto", -5, -9)],
+    "wind.reed.saxophone.tenor": [(2, "wind.reed.saxophone.tenor", -8, -14)],
+    "wind.reed.saxophone.baritone": [(3, "wind.reed.saxophone.baritone", -12, -21)],
+    "wind.reed.clarinet": [(2, "wind.reed.clarinet.bflat", -1, -2), (-3, "wind.reed.clarinet.a", -2, -3),
+                           (3, "wind.reed.clarinet.eflat", 2, 3)],
+    "wind.reed.clarinet.bass": [(2, "wind.reed.clarinet.bass", -8, -14)],
+    "brass.trumpet": [(2, "brass.trumpet.bflat", -1, -2)],
+    "brass.cornet": [(2, "brass.cornet", -1, -2)],
+    "brass.flugelhorn": [(2, "brass.flugelhorn", -1, -2)],
+    "brass.french-horn": [(1, "brass.french-horn", -4, -7), (3, "brass.french-horn", -5, -9)],
+  ]
+
+  /// Whether a part playing `sound` sounds as written, so its key signature is the score's concert key.
+  static func soundsAsWritten(_ sound: String) -> Bool {
+    !sound.hasPrefix("drum.") && byKey[sound] == nil && sound != "wind.reed.saxophone"
+      && !keyed.values.contains { $0.0 == sound && ($0.1, $0.2) != (0, 0) }
+  }
+
+  /// A part's instrument corrected by its key signature (`written`, in fifths) against the score's concert key
+  /// (`concert`; nil when no part sounds as written). Key signatures tell only when one of the two has sharps or
+  /// flats: a score without any (atonal, or in C throughout) keeps the name's reading. Equal keys mean a score
+  /// printed at concert pitch, played as written.
+  static func transposition(of match: Match, written: Int, concert: Int?) -> Match {
+    let family = byKey.first { family, keys in
+      match.sound == family || keys.contains { $0.sound == match.sound }
+    }
+    guard let (_, keys) = family else { return match }
+    guard let concert, written != 0 || concert != 0 else {
+      // nothing to compare: a saxophone is in its usual key, anything else as its name says
+      guard match.transpose == nil, match.sound.hasPrefix("wind.reed.saxophone."), let k = keys.first else { return match }
+      return Match(sound: k.sound, name: match.name, transpose: (k.diatonic, k.chromatic))
+    }
+    let fifths = ((written - concert) % 12 + 18) % 12 - 6   // -6...5
+    if fifths == 0 { return Match(sound: match.sound, name: match.name, transpose: nil) }
+    guard let k = keys.first(where: { $0.fifths == fifths }) else { return match }
+    return Match(sound: k.sound, name: match.name, transpose: (k.diatonic, k.chromatic))
+  }
 
   /// Lower case, flats and sharps as "b" and "#", no dots, single spaces: "Clarinet in B♭" → "clarinet in bb".
   static func key(_ name: String) -> String {
