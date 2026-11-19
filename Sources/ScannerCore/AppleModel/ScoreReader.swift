@@ -217,12 +217,16 @@ public enum ScoreReader {
     }
     try Task.checkCancellation()
     progress("Combining \(pages.count) pages")
-    let combined = try PDFScanner.combine(pages: pages, title: title, seconds: pages.reduce(0) { $0 + $1.seconds })
+    let combined = try PDFScanner.combine(pages: pages, title: title, seconds: pages.reduce(0) { $0 + $1.seconds },
+                                          partLabels: textAnalyses.map { $0.partNames ?? [] })
+    // the pages' parts matched by name and clef: one name per part of the joined score
+    let joinedNames = combined.partLabels.contains { !$0.isEmpty } && combined.partLabels != (textAnalyses.first?.partNames ?? [])
     let metadata = textAnalyses.compactMap(\.metadata).first
     let score = try ScoreMetadataMusicXML.insertingRecognizedContent(
       title: metadata?.title, composer: metadata?.composer, arranger: metadata?.arranger,
-      tempo: metadata?.headerTempo, partNames: textAnalyses.first?.partNames ?? partNames(metadata?.partName),
-      partAbbreviations: textAnalyses.first?.partAbbreviations ?? [],
+      tempo: metadata?.headerTempo,
+      partNames: joinedNames ? combined.partLabels : textAnalyses.first?.partNames ?? partNames(metadata?.partName),
+      partAbbreviations: joinedNames ? [] : textAnalyses.first?.partAbbreviations ?? [],
       staffText: textDirections, into: combined)
     let chordNotes = chordAnalyses.compactMap(\.routeNote)
     let chords = AppleChordAnalysis(

@@ -5,7 +5,7 @@ import Foundation
 public enum CopistaInspect {
   public static func run(image: URL, models: URL, output: URL) throws -> String {
     let start = Date()
-    let page = try Copista.decodeGray(Data(contentsOf: image))
+    let page = Copista.straightened(try Copista.decodeGray(Data(contentsOf: image)))
     let engine = try Copista.Engine(models: models)
     let loaded = Date()
     let r = try engine.read(page)

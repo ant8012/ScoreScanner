@@ -13,6 +13,15 @@ struct ScoreValidityMusicXMLTests {
       (tuplet ? "<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>" : "") +
       (mark.isEmpty ? "" : "<notations><tuplet type=\"\(mark)\"/></notations>") + extra + "</note>"
   }
+  @Test func meterAfterTheNotesStartsAtTheNextBar() throws {
+    // a 6/4 written beside an end-of-bar clef change: MuseScore reads this bar as 4/4, so its 6/4 of notes is long
+    let late = "<attributes><time><beats>6</beats><beat-type>4</beat-type></time><clef><sign>F</sign><line>4</line></clef></attributes>"
+    let xml = score("<measure number=\"1\">\(attributes)\(note(duration: 72, type: "whole", tuplet: false, extra: "<dot/>"))\(late)</measure>" +
+      "<measure number=\"2\">\(note(duration: 72, type: "whole", tuplet: false, extra: "<dot/>"))</measure>")
+    let m = try XMLNode.parse(ScoreValidityMusicXML.apply(xml)).first("part")!.first("measure")!
+    let opening = m.children.prefix { $0.tag != "note" }.filter { $0.tag == "attributes" }
+    #expect(opening.contains { $0.first("time")?.first("beats")?.text == "6" })
+  }
   @Test func validFileIsByteIdentical() throws {
     let xml = score("<measure number=\"1\">\(attributes)\(note(duration: 48, type: "whole", tuplet: false))</measure>")
     #expect(try ScoreValidityMusicXML.apply(xml) == xml)

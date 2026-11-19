@@ -213,14 +213,12 @@ enum LocalTextReader {
     let acceptedChords = words.filter { chordWords.contains(LocalChordReader.wordKey($0.x0, $0.y0, $0.x1, $0.y1)) }
       .map { Box(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) }
     let lyrics = try readLyrics(scan.lyricWords, page: page, model: model, chords: acceptedChords)
-    var names: (long: [String], short: [String])?
-    if header {
-      progress("Reading part names")
-      names = try partNames(page: page, staffs: geometries, model: model)
-      // one part with no name beside its staff: the label at the top left names it
-      if let label = partLabel, names?.long.count == 1, names?.long.first?.isEmpty ?? true {
-        names?.long = [label.capitalized]
-      }
+    // every page's names: a later page of a large score shows a different set of parts, matched by them
+    progress("Reading part names")
+    var names: (long: [String], short: [String])? = try partNames(page: page, staffs: geometries, model: model)
+    // one part with no name beside its staff: the label at the top left names it
+    if header, let label = partLabel, names?.long.count == 1, names?.long.first?.isEmpty ?? true {
+      names?.long = [label.capitalized]
     }
     return AppleScoreTextAnalysis(
       route: route, routeNote: nil, metadata: metadata?.isEmpty == true ? nil : metadata,
@@ -355,7 +353,7 @@ enum LocalTextReader {
   }
 
   /// The tallest letter of a part name, in staff spaces: taller pieces in the margin are brackets and braces.
-  static let nameLetterMax = 2.5
+  static let nameLetterMax = 3.5
   /// Readings below this are smudges, bracket ends or stray marks.
   static let nameScoreMin = 0.6
 

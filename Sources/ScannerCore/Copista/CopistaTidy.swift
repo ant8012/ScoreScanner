@@ -189,8 +189,11 @@ extension Copista {
 
     /// A time signature at the start of a bar, in its attributes (made if the bar has none), in MusicXML order.
     static func setTime(_ m: XMLNode, _ beats: Int, _ beatType: Int, id: String?) {
+      // the bar's opening attributes: a meter in a block after its first note (a clef change for the next bar)
+      // would start only after this bar
       let attrs: XMLNode
-      if let a = m.first("attributes") { attrs = a } else {
+      let firstSound = m.children.firstIndex { ["note", "backup", "forward"].contains($0.tag) } ?? m.children.count
+      if let a = m.children[..<firstSound].first(where: { $0.tag == "attributes" }) { attrs = a } else {
         attrs = XMLNode("attributes")
         m.children.insert(attrs, at: (m.children.lastIndex { $0.tag == "print" } ?? -1) + 1)
       }

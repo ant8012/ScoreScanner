@@ -12,6 +12,8 @@ public struct DocumentScanResult: Sendable {
   public let staffCount: Int
   public let repairedMeasures: Int
   public let pageCount: Int
+  /// One printed name per part of the joined score ("" where none was read), when the pages' names were given.
+  public var partLabels: [String] = []
   public init(_ scan: ScanResult) {
     xml = scan.xml; rawXML = scan.rawXML; seconds = scan.seconds
     staffCount = scan.staffs.count; repairedMeasures = scan.repairedMeasures; pageCount = 1
@@ -27,11 +29,17 @@ public enum PDFScanner {
   public static let renderWidth = 2480
 
   /// Pages read one by one, joined into one score: each part's measures page after page.
-  public static func combine(pages: [ScanResult], title: String = "", seconds: Double) throws -> DocumentScanResult {
-    let xml = try CopistaMerge.combine(pages.map(\.xml), title: title)
-    return DocumentScanResult(xml: xml, rawXML: xml, seconds: seconds,
-                              staffCount: pages.reduce(0) { $0 + $1.staffs.count }, repairedMeasures: 0,
-                              pageCount: pages.count)
+  /// `partLabels`: per page, the name printed beside each of its parts, so a page that hides resting instruments
+  /// still puts each instrument in its own part.
+  public static func combine(pages: [ScanResult], title: String = "", seconds: Double, partLabels: [[String]] = [])
+    throws -> DocumentScanResult
+  {
+    let (xml, labels) = try CopistaMerge.combine(pages.map(\.xml), title: title, labels: partLabels)
+    var result = DocumentScanResult(xml: xml, rawXML: xml, seconds: seconds,
+                                    staffCount: pages.reduce(0) { $0 + $1.staffs.count }, repairedMeasures: 0,
+                                    pageCount: pages.count)
+    result.partLabels = labels
+    return result
   }
 }
 

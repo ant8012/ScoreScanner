@@ -5,7 +5,7 @@ import Foundation
 public enum ChordFinderInspect {
   /// `copista` holds layout.json and tok.json; `output` receives the proposals as JSON.
   public static func run(image: URL, copista: URL, output: URL) throws -> String {
-    let page = try Copista.decodeGray(Data(contentsOf: image))
+    let page = Copista.straightened(try Copista.decodeGray(Data(contentsOf: image)))
     let layout = try loadLayout(copista)
     let start = Date()
     let found = ChordFinder.find(gray: page.pixels, width: page.width, height: page.height, layout: layout)

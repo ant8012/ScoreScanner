@@ -438,14 +438,22 @@ enum ScoreValidityMusicXML {
     for measures in parts {
       var divisions = 1, meter = (4, 4), bars: [Bar] = []
       for m in measures {
-        for a in m.all("attributes") {
-          if let d = a.first("divisions") { divisions = try d.integer() }
-          if let t = a.first("time"), let b = t.first("beats"), let bt = t.first("beat-type") {
-            meter = (try b.integer(), try bt.integer())
+        // a meter after the bar's first note (beside a clef change for the next bar) starts at the next bar, as
+        // MuseScore reads it
+        var later: (Int, Int)?
+        var sounded = false
+        for c in m.children {
+          if ["note", "backup", "forward"].contains(c.tag) { sounded = true }
+          guard c.tag == "attributes" else { continue }
+          if let d = c.first("divisions") { divisions = try d.integer() }
+          if let t = c.first("time"), let b = t.first("beats"), let bt = t.first("beat-type") {
+            let value = (try b.integer(), try bt.integer())
+            if sounded { later = value } else { meter = value }
           }
         }
         guard divisions > 0, meter.0 > 0, meter.1 > 0 else { throw ScannerError.invalid("Invalid MusicXML divisions or meter") }
         bars.append(try parse(m, divisions: divisions, meter: meter))
+        if let later { meter = later }
       }
       snapshots.append(bars)
     }

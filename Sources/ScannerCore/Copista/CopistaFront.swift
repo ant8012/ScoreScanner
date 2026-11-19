@@ -384,11 +384,52 @@ extension Copista {
       }
     }
 
+    /// Where bar lines should cross from `a` down to `b`: the bar lines detected on their own, else the right
+    /// edges of `a`'s measures.
+    static func barXs(_ syms: [Sym], _ a: Staff, _ b: Staff) -> [Double] {
+      let sp = (a.sp + b.sp) / 2
+      let lines = syms.filter { s in
+        s.fam == "barLine" && s.p >= 0.5 && s.staff < 0 && a.y0 - sp <= s.cy && s.cy <= a.y1 + sp &&
+          max(a.x0, b.x0) <= s.cx && s.cx <= min(a.x1, b.x1)
+      }
+      if !lines.isEmpty { return lines.map(\.cx) }
+      return a.bars.compactMap { k -> Double? in
+        let s = syms[k]
+        return !s.synthetic && max(a.x0, b.x0) <= s.box.2 && s.box.2 <= min(a.x1, b.x1) ? s.box.2 : nil
+      }
+    }
+
+    /// Share of `xs` where a pale line (darker than `cut`) runs down every row from below `a` to above `b`: bar
+    /// lines on a faded photocopy that the ink mask misses.
+    static func paleBars(_ levels: Gray, cut: Double, _ a: Staff, _ b: Staff, xs: [Double]) -> Double {
+      let H = levels.height, W = levels.width
+      let ya = max(0, pyRound(a.y1 + 1)), yb = min(H, pyRound(b.y0 - 1))
+      if xs.isEmpty || yb - ya < 2 { return 0 }
+      let reach = max(2, pyRound((a.sp + b.sp) / 4))
+      var good = 0
+      for x in xs {
+        let lo = max(0, pyRound(x) - reach), hi = min(W, pyRound(x) + reach + 1)
+        if lo >= hi { continue }
+        // the column darkest over the most rows, so a slanted or wobbly line still counts
+        var best = 0
+        for c in lo..<hi {
+          var hit = 0
+          for y in ya..<yb where Double(levels[y, max(0, c - 1)]) < cut || Double(levels[y, c]) < cut ||
+            Double(levels[y, min(W - 1, c + 1)]) < cut { hit += 1 }
+          best = max(best, hit)
+        }
+        if Double(best) >= inkLink * Double(yb - ya) { good += 1 }
+      }
+      return Double(good) / Double(xs.count)
+    }
+
     static func inkLinks(_ mask: Mask, _ syms: [Sym], _ a: Staff, _ b: Staff, pageLeft: Double,
                          sheetLeft: Int = 0) -> (Double, Double) {
       let sp = (a.sp + b.sp) / 2
       let y0 = a.y1 + 1, y1 = b.y0 - 1
-      let (lo, hi) = leftSpan(a, b, pageLeft: pageLeft)
+      // up to where the staff lines begin: a brace or bracket left of the opening line can make a staff's box start
+      // before it
+      let (lo, hi) = leftSpan(a, b, pageLeft: pageLeft, lines: true)
       // ink joined to the sheet's left edge (a page edge or binding shadow in a photo) links nothing: rows count
       // only ink a staff space beyond it
       let ra = max(0, pyRound(y0)), rb = min(mask.height, pyRound(y1))
@@ -458,9 +499,90 @@ extension Copista {
       return v
     }
 
+    /// A staff's inner bar lines: the bar lines detected on it, without the system's last one at the right end.
+    static func innerBars(_ syms: [Sym], _ st: Staff) -> [Double] {
+      let xs = syms.filter { s in
+        s.fam == "barLine" && s.p >= 0.5 && st.y0 - st.sp <= s.cy && s.cy <= st.y1 + st.sp && s.cx < st.x1 - 2 * st.sp
+      }.map(\.cx).sorted()
+      var out: [Double] = []
+      for x in xs where out.last.map({ x - $0 > st.sp }) ?? true { out.append(x) }
+      return out
+    }
+
+    /// Bar lines at the same places on both staves, to within a staff space, and bars of uneven widths (music, not a
+    /// ruled grid): `nil` when they don't match.
+    static func sharedBars(_ syms: [Sym], _ a: Staff, _ b: Staff) -> [Double]? {
+      let sp = (a.sp + b.sp) / 2
+      let ea = innerBars(syms, a), eb = innerBars(syms, b)
+      if ea.count < 3 || eb.count < 3 { return nil }
+      let hitA = ea.filter { x in eb.contains { abs($0 - x) <= sp } }
+      let hitB = eb.filter { x in ea.contains { abs($0 - x) <= sp } }
+      if Double(hitA.count) < 0.8 * Double(ea.count) || Double(hitB.count) < 0.8 * Double(eb.count) || hitA.count < 3 {
+        return nil
+      }
+      let widths = zip(hitA, hitA.dropFirst()).map { $1 - $0 }
+      if widths.count < 2 || widths.max()! < 1.15 * widths.min()! { return nil }
+      return hitA
+    }
+
+    /// A large ensemble's system breaks its bar lines between the instrument families, and on a faded copy the
+    /// opening line that still joins them can be lost. Two staves with no ink between them are still one system when
+    /// one of them already belongs to a group of three or more joined staves and their bar lines fall at the same
+    /// uneven places: two separate systems on a page almost never divide their bars alike.
+    static func ensembleLinks(_ syms: [Sym], _ staves: [Staff], _ decided: inout [Bool], opening: [Double],
+                              page: PageInk) {
+      let n = staves.count
+      // a page that draws each system's opening line clearly (nine in ten of the staves it joined show one), with
+      // no line between two groups of as many staves each, holds two systems of the same instruments, however their
+      // bar lines happen to line up. A photocopy that loses the line at the page edge does not count, and neither
+      // does a missed line between two unequal parts of one orchestral system.
+      let joinedLines = (1..<n).filter { decided[$0 - 1] }.map { opening[$0 - 1] }
+      let drawsLines = joinedLines.count >= 2
+        && Double(joinedLines.filter { $0 >= inkLink }.count) >= 0.9 * Double(joinedLines.count)
+      let gaps = (1..<n).map { (staves[$0].y0 - staves[$0 - 1].y1) / staves[$0 - 1].sp }
+      let typical = median(index: gaps)
+      let (h, cnt) = histogram(page.gray)
+      let paper = percentile(h, count: cnt, 50), dark = percentile(h, count: cnt, 1)
+      let cut = paper - pale * max(1.0, paper - dark)
+      /// A row between the staves dark across half their width: a staff of one line (percussion) the finder missed.
+      /// Without one, an unusually wide gap is the space between two systems.
+      func lineBetween(_ a: Staff, _ b: Staff) -> Bool {
+        let g = page.gray
+        let x0 = max(0, Int(max(a.x0, b.x0))), x1 = min(g.width, Int(min(a.x1, b.x1)))
+        let y0 = max(0, Int(a.y1 + a.sp)), y1 = min(g.height, Int(b.y0 - b.sp))
+        if x1 - x0 < 10 || y1 <= y0 { return false }
+        for y in y0..<y1 {
+          var hit = 0
+          for x in x0..<x1 where Double(g[y, x]) < cut { hit += 1 }
+          if hit * 2 >= x1 - x0 { return true }
+        }
+        return false
+      }
+      func run(_ k: Int) -> Int {          // size of the joined group holding staff k
+        var lo = k, hi = k
+        while lo > 0 && decided[lo - 1] { lo -= 1 }
+        while hi < n - 1 && decided[hi] { hi += 1 }
+        return hi - lo + 1
+      }
+      var changed = true
+      while changed {
+        changed = false
+        for k in 1..<n where !decided[k - 1] {
+          let a = staves[k - 1], b = staves[k]
+          // two systems of the same instruments, one under the other: as many staves each, no line between
+          let repeated = drawsLines && opening[k - 1] < 0.5 && run(k - 1) == run(k)
+          guard !repeated, max(run(k - 1), run(k)) >= 3, sharedBars(syms, a, b) != nil,
+                gaps[k - 1] <= 1.5 * typical || lineBetween(a, b) else { continue }
+          decided[k - 1] = true
+          changed = true
+        }
+      }
+    }
+
     static func systems(_ syms: inout [Sym], _ staves: [Staff], page: PageInk?, ink: Bool, links w: [Double],
                         forced: [Int: [Double]], classId: [String: Int]) -> [System] {
       var decided: [Bool] = []
+      var opening: [Double] = []     // per gap, the system's opening line found there (0: none)
       if staves.count > 1 {
         let gaps = (0..<(staves.count - 1)).map { (staves[$0 + 1].y0 - staves[$0].y1) / staves[$0].sp }
         let gm = median(index: gaps)
@@ -474,9 +596,10 @@ extension Copista {
       if let page, staves.count > 1 {
         let pageLeft = staves.map(\.x0).min()!
         var tone: (Double, Double)?
+        opening = [Double](repeating: 0, count: staves.count - 1)
         for k in 1..<staves.count {
           let a = staves[k - 1], b = staves[k]
-          let (left, bars) = inkLinks(page.mask, syms, a, b, pageLeft: pageLeft, sheetLeft: page.sheetLeft)
+          var (left, bars) = inkLinks(page.mask, syms, a, b, pageLeft: pageLeft, sheetLeft: page.sheetLeft)
           var line = 0.0
           if left < inkLink && bars < 0.5 {
             line = openingLine(page.mask, a, b, pageLeft: pageLeft)
@@ -489,6 +612,15 @@ extension Copista {
                                         sheetLeft: page.sheetLeft))
             }
           }
+          if left < inkLink && line < inkLink && bars < 0.5 {
+            if tone == nil {
+              let (h, n) = histogram(page.gray)
+              tone = (percentile(h, count: n, 50), percentile(h, count: n, 1))
+            }
+            let cut = tone!.0 - pale * max(1.0, tone!.0 - tone!.1)
+            bars = max(bars, paleBars(page.gray, cut: cut, a, b, xs: barXs(syms, a, b)))
+          }
+          opening[k - 1] = max(left, line)
           if left >= inkLink || line >= inkLink || bars >= 0.5 {
             decided[k - 1] = true
           } else if left < inkSplit && bars < 0.1 {
@@ -498,6 +630,7 @@ extension Copista {
           }
         }
       }
+      if let page, staves.count > 2 { ensembleLinks(syms, staves, &decided, opening: opening, page: page) }
       var systems: [System] = []
       for (k, _) in staves.enumerated() {
         if k > 0 && decided[k - 1] { systems[systems.count - 1].staves.append(k) } else { systems.append(System(staves: [k])) }
@@ -680,6 +813,7 @@ extension Copista {
     // MARK: the ink path
     static func inkStaves(_ gray: Gray, _ syms: [Sym]) -> [Staff]? {
       var staves = inkStavesFrom(gray, syms)
+      // the cleaned page, then Otsu's own threshold (a grey photocopy): each only when it holds clearly more music
       let other = inkStavesFrom(cleanPage(gray), syms)
       if let other, staves == nil || stavesScore(other, syms) > 1.02 * stavesScore(staves!, syms) { staves = other }
       staves = staves.map { joinSplit($0, syms) }

@@ -432,3 +432,49 @@ extension Copista {
     return out.mapValues { Array(Set($0)).sorted() }
   }
 }
+
+extension Copista {
+  /// The most staves the evidence model reads together: it was trained on systems of up to `maxStaves`, and every
+  /// staff past that would share one position.
+  static let windowStaves = 12
+
+  /// The layout as the evidence model should see it: a system taller than `windowStaves` (a full orchestra) cut into
+  /// windows of staves, each read as a system of its own with its neighbours as context. Each cut goes at the widest
+  /// gap near an even split, where one instrument family ends, so a grand staff stays whole. The symbols are the
+  /// same objects, so the readings map straight back; the page's own layout is left as it is.
+  static func windowed(_ L: Layout) -> Layout {
+    guard L.systems.contains(where: { $0.staves.count > windowStaves }) else { return L }
+    let staves = L.staves.map { s -> Staff in
+      let c = Staff(bars: s.bars, sp: s.sp, y0: s.y0, y1: s.y1, x0: s.x0, x1: s.x1)
+      c.lineX0 = s.lineX0
+      return c
+    }
+    var systems: [System] = []
+    for sy in L.systems {
+      let n = sy.staves.count
+      var cuts: [Int] = []          // window starts after the first
+      if n > windowStaves {
+        let parts = (n + windowStaves - 1) / windowStaves
+        var last = 0
+        for w in 1..<parts {
+          let target = w * n / parts
+          var best = target, gap = -Double.infinity
+          for c in max(last + 2, target - 2)...min(n - 2, target + 2) where c - last <= windowStaves {
+            let g = L.staves[sy.staves[c]].y0 - L.staves[sy.staves[c - 1]].y1
+            if g > gap { gap = g; best = c }
+          }
+          cuts.append(best)
+          last = best
+        }
+      }
+      let bounds = [0] + cuts + [n]
+      for (a, b) in zip(bounds, bounds.dropFirst()) {
+        let w = System(staves: Array(sy.staves[a..<b]))
+        w.columns = Array(sy.columns[a..<b])
+        for (pos, k) in w.staves.enumerated() { staves[k].system = systems.count; staves[k].pos = pos }
+        systems.append(w)
+      }
+    }
+    return Layout(syms: L.syms, staves: staves, systems: systems, sp: L.sp, width: L.width, height: L.height, ink: L.ink)
+  }
+}

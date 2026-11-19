@@ -34,7 +34,10 @@ enum InstrumentSounds {
     "oboe": "wind.reed.oboe", "ob": "wind.reed.oboe",
     "english horn": "wind.reed.english-horn", "cor anglais": "wind.reed.english-horn",
     "clarinet": "wind.reed.clarinet", "cl": "wind.reed.clarinet", "bass clarinet": "wind.reed.clarinet.bass",
-    "bassoon": "wind.reed.bassoon", "bsn": "wind.reed.bassoon", "contrabassoon": "wind.reed.contrabassoon",
+    "b cl": "wind.reed.clarinet.bass", "bcl": "wind.reed.clarinet.bass", "contrabass clarinet": "wind.reed.clarinet.contrabass",
+    "cb cl": "wind.reed.clarinet.contrabass",
+    "bassoon": "wind.reed.bassoon", "bsn": "wind.reed.bassoon", "bn": "wind.reed.bassoon", "contrabassoon": "wind.reed.contrabassoon",
+    "cbn": "wind.reed.contrabassoon", "cbsn": "wind.reed.contrabassoon",
     "saxophone": "wind.reed.saxophone", "sax": "wind.reed.saxophone",
     "soprano saxophone": "wind.reed.saxophone.soprano", "soprano sax": "wind.reed.saxophone.soprano",
     "alto saxophone": "wind.reed.saxophone.alto", "alto sax": "wind.reed.saxophone.alto",
@@ -59,11 +62,11 @@ enum InstrumentSounds {
     // plucked
     "guitar": "pluck.guitar", "gtr": "pluck.guitar", "acoustic guitar": "pluck.guitar.acoustic",
     "electric guitar": "pluck.guitar.electric", "bass guitar": "pluck.bass.electric",
-    "electric bass": "pluck.bass.electric", "harp": "pluck.harp", "banjo": "pluck.banjo",
+    "electric bass": "pluck.bass.electric", "harp": "pluck.harp", "hp": "pluck.harp", "hrp": "pluck.harp", "banjo": "pluck.banjo",
     "mandolin": "pluck.mandolin", "ukulele": "pluck.ukulele",
     // pitched percussion
     "vibraphone": "mallet.vibraphone", "marimba": "mallet.marimba", "xylophone": "mallet.xylophone",
-    "glockenspiel": "mallet.glockenspiel", "timpani": "drum.timpani",
+    "glockenspiel": "mallet.glockenspiel", "timpani": "drum.timpani", "timp": "drum.timpani",
   ]
 
   /// Instruments in a printed key: name with its key → (sound, diatonic, chromatic), written to sounding pitch.
@@ -100,6 +103,32 @@ enum InstrumentSounds {
     }
     if words.count > 1, leading.contains(words[0].lowercased()) { words.removeFirst() }
     return words.joined(separator: " ")
+  }
+
+  /// The instrument a name misread by a letter or two stands for ("larinet", "Ti impani"), for matching parts
+  /// between pages; never for choosing a sound. Long names only, so a short abbreviation is not stretched.
+  static func nearest(_ name: String) -> String? {
+    let k = key(base(name)).replacingOccurrences(of: " ", with: "")
+    guard k.count >= 6 else { return nil }
+    func distance(_ a: [Character], _ b: [Character]) -> Int {
+      var row = Array(0...b.count)
+      for i in 1...a.count {
+        var prev = row[0]; row[0] = i
+        for j in 1...b.count {
+          let cur = row[j]
+          row[j] = min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] == b[j - 1] ? 0 : 1))
+          prev = cur
+        }
+      }
+      return row[b.count]
+    }
+    let a = Array(k)
+    var best: (String, Int)?
+    for (n, sound) in names where n.count >= 6 {
+      let d = distance(a, Array(n.replacingOccurrences(of: " ", with: "")))
+      if d <= (n.count >= 9 ? 2 : 1), best == nil || d < best!.1 { best = (sound, d) }
+    }
+    return best?.0
   }
 
   /// Whether a name is an instrument's at all (a part label), "Bass" included, whatever its sound.

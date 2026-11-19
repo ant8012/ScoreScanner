@@ -57,7 +57,7 @@ public enum Scanner {
     progress("Loading recognition models")
     let engine = try Copista.Engine(models: models)
     progress("Preparing the original image")
-    let page = try Copista.decodeGray(image)
+    let page = Copista.straightened(try Copista.decodeGray(image))
     let read = try engine.read(page, title: title, carriedMeter: carriedMeter, progress: progress)
     guard read.xml.contains("<pitch>") else { throw ScannerError.invalid("No readable music was found") }
     progress("Finding chord symbols")

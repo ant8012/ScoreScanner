@@ -136,7 +136,7 @@ extension Copista {
       var layout = Front.build(dets, width: Double(page.width), height: Double(page.height), page: page, meta: meta,
                                classId: classId)
       progress("Reading the music in context")
-      var rd = Reading(layout: layout, tok: try evidence.read(layout), classes: meta.classes)
+      var rd = Reading(layout: layout, tok: try evidence.read(windowed(layout)), classes: meta.classes)
       try Task.checkCancellation()
       // bar lines the first reading shows were missed: read again with them
       let mask = inkMask(page.pixels.map(Float.init), width: page.width, height: page.height, integral: true)
@@ -145,7 +145,7 @@ extension Copista {
         progress("Reading again with the bar lines found")
         layout = Front.build(dets, width: Double(page.width), height: Double(page.height), page: page, meta: meta,
                              classId: classId, cuts: cuts)
-        rd = Reading(layout: layout, tok: try evidence.read(layout), classes: meta.classes)
+        rd = Reading(layout: layout, tok: try evidence.read(windowed(layout)), classes: meta.classes)
         rd.revised = cuts
       }
       rd.slashBars = Slashes.bars(page, rd)

@@ -183,8 +183,10 @@ extension Copista {
     }
   }
 
-  /// The staff finder's threshold: not quite Otsu (see staves.py), 254 on any page with pure white.
-  static func otsu(_ hist: [Int]) -> Int {
+  /// The staff finder's first threshold: not quite Otsu (see staves.py), 254 on any page with pure white, so on
+  /// a clean page every faint grey line counts as ink. `exact` is Otsu's own threshold, which a grey photocopy
+  /// with white margins needs: at 254 its whole paper is ink.
+  static func otsu(_ hist: [Int], exact: Bool = false) -> Int {
     let h = hist.map(Double.init)
     let total = h.reduce(0, +)
     var w0 = [Double](repeating: 0, count: 256), m0 = w0, cs = w0, rcs = w0
@@ -196,7 +198,7 @@ extension Copista {
     for t in 0..<255 {
       m0[t] = cs[t] / max(w0[t], 1)
       let w1t = total - w0[t]
-      let m1 = rcs[t + 1] / max(total - w0[t + 1], 1)
+      let m1 = rcs[t + 1] / max(exact ? w1t : total - w0[t + 1], 1)
       let between = w0[t] * w1t * (m0[t] - m1) * (m0[t] - m1)
       if between > bv { bv = between; best = t }
     }

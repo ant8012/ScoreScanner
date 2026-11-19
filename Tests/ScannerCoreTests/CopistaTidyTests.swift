@@ -14,6 +14,15 @@ struct CopistaTidyTests {
     """
   }
 
+  @Test func meterGoesBeforeTheBarsFirstNote() throws {
+    // the bar's only attributes block sits after its notes (a clef for the next bar): the meter needs its own
+    let m = try XMLNode.parse(Data("<measure><note><rest/><duration>4</duration></note><attributes><clef><sign>F</sign></clef></attributes></measure>".utf8))
+    Copista.Tidy.setTime(m, 6, 4, id: nil)
+    #expect(m.children.first?.tag == "attributes")
+    #expect(m.children.first?.first("time")?.first("beats")?.text == "6")
+    #expect(m.children.last?.first("time") == nil)
+  }
+
   private func note(_ step: String, _ octave: Int, _ duration: Int, voice: Int, chord: Bool = false) -> String {
     "<note>\(chord ? "<chord></chord>" : "")<pitch><step>\(step)</step><octave>\(octave)</octave></pitch>"
       + "<duration>\(duration)</duration><voice>\(voice)</voice><type>quarter</type></note>"

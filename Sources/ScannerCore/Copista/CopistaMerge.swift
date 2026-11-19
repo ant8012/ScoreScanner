@@ -6,10 +6,26 @@ import Foundation
 /// the divisions, key, meter and clefs it states.
 enum CopistaMerge {
   static func combine(_ pages: [Data], title: String = "") throws -> Data {
+    try combine(pages, title: title, labels: []).xml
+  }
+
+  /// `labels`: per page, the instrument name printed beside each of its parts ("" where none was read). Returns
+  /// the score and one name per part of it.
+  static func combine(_ pages: [Data], title: String = "", labels: [[String]]) throws -> (xml: Data, labels: [String]) {
     let roots = try pages.map { try XMLNode.parse($0) }
     guard let first = roots.first else { throw ScannerError.invalid("The PDF did not contain any readable pages") }
     let partCount = roots.map { $0.all("part").count }.max() ?? 0
     guard partCount > 0 else { throw ScannerError.invalid("No readable music was found") }
+    let sigs = roots.enumerated().map { p, root in
+      root.all("part").enumerated().map { k, part in
+        var s = signature(part, label: p < labels.count && k < labels[p].count ? labels[p][k] : "")
+        s.rank = Double(k) / Double(max(1, root.all("part").count - 1))
+        return s
+      }
+    }
+    if !samePartsThroughout(sigs) {
+      return try aligned(roots, sigs, title: title)
+    }
     if let plist = first.first("part-list") {
       var n = plist.all("score-part").count
       while n < partCount {
@@ -62,6 +78,7 @@ enum CopistaMerge {
             if k > 0, ref[k].first("print")?.attributes["new-system"] == "yes" {
               c.children.insert(XMLNode("print", attributes: ["new-system": "yes"]), at: 0)
             }
+            if k > 0 { carryMeter(from: m, into: c) }
             let length = measureLength(m)
             if length > 0 {
               c.children.append(XMLNode("note", attributes: ["print-object": "no"], children: [
@@ -79,7 +96,21 @@ enum CopistaMerge {
     let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
       "<!DOCTYPE score-partwise PUBLIC \"-//Recordare//DTD MusicXML 4.0 Partwise//EN\" \"http://www.musicxml.org/dtds/partwise.dtd\">\n" +
       first.serialized()
-    return ScoreValidityMusicXML.repaired(Data(xml.utf8))
+    return (ScoreValidityMusicXML.repaired(Data(xml.utf8)), labels.first ?? [])
+  }
+
+  /// A silent bar standing in for a part the page leaves out takes the page's meter and key changes from the bar
+  /// it stands beside: kept in the page's opening meter, a 5/4 rest in a 4/4 bar is a bar MuseScore refuses.
+  static func carryMeter(from m: XMLNode, into c: XMLNode) {
+    let changes = m.all("attributes").flatMap { a in a.children.filter { $0.tag == "key" || $0.tag == "time" } }
+    guard !changes.isEmpty else { return }
+    let a = XMLNode("attributes", children: changes.map { x in
+      let copy = x.copy()
+      copy.attributes["id"] = nil      // XML ids stay unique
+      return copy
+    })
+    let at = c.children.firstIndex { $0.tag != "print" } ?? c.children.count
+    c.children.insert(a, at: at)
   }
 
   /// The meter a page's score ends in ("3/4"), to carry into the next page.
