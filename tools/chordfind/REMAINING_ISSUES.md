@@ -8,6 +8,34 @@ Jack has to make first. Each entry says where it was seen and what goes wrong fo
 Rules for adding fixes (Jack): fix general causes, judged on the whole test set, never one chart; ask before a fix
 that looks specific to one chart; show regression numbers, and say which checks were not run.
 
+## Nov 19 stuff (from users' scores: Edelweiss, Candy, Just the Way You Are, a hymn)
+
+Parked for later; not started. Seen Nov 19 2026 on 0.1.21.
+
+| Issue | Seen in | Effect |
+| --- | --- | --- |
+| Multi-bar rests ("6", "3", "7" over a long rest) written as one bar | Candy (2nd alto part): 55 bars for 65 | every later bar misnumbered, D.S./Coda land wrong |
+| Hymn verse number ("1. Now") takes the first note | "Now Let Us Rejoice" | first syllable missing, left as staff text |
+| Dashed extension lines read into staff text ("play both times - - - ┐") | Just the Way You Are | junk characters in text |
+| One-bar drum repeats (% with bar counts) read as empty bars | Just the Way You Are, bars 7-13 | drums silent |
+| Handwritten jazz-font treble clef at line starts read as an alto clef | Candy, two systems | 7 bars a seventh low |
+| Handwritten part name ("2nd E♭ Alto Saxophone") not read | Candy | no instrument, no transposition |
+| "D.S. al Coda" in a handwritten font read as "D.S. S AL COOA" | Candy | no jump on playback |
+| Boxed rehearsal numbers mostly missed (41 read as "4") | Candy | rehearsal marks missing |
+| An accidental read as a key change (3 sharps for 2) | Candy, twice | wrong key for a bar or line |
+| A part's page-2 header ("ALTO 2", "CANDY") read as staff text | Candy | stray text in the music |
+| Octave-transposing instruments (guitar, bass guitar, double bass, piccolo) play at written pitch | any score naming them | guitar and bass an octave high |
+| "Bass" in a band (beside guitar, drums, saxes) gets no instrument | Just the Way You Are | default sound |
+| A trumpet or clarinet part on its own (nothing to compare keys with) is not transposed | lone parts | plays at written pitch |
+| Part names with the key in front in short forms ("B♭ Tenor Sax", "E♭ Alto Sax", "E♭ Bari Sax") not recognised; Jack: leave it, the printed key is often missing or wrong. Idea to try: a name that contains "soprano/alto/tenor/bari/baritone sax(ophone)" is that sax (longest phrase wins, printed key ignored); saxes only for now | lone parts | no instrument, no transposition |
+| A bass note missed or misread, differently on the Mac and the phone | Edelweiss bars 25 and 30 | wrong or missing note |
+| Real Book lines still read as percussion after the clef fix (a short mark taken for a percussion clef) | nrb1 p.426, p.255, p.68, p.365, rb6 p.226 (194 notes) | notes become drum hits |
+| A continuation page with no clef takes the reader's guess for its first bars | nrb2 p.148 (bass clef until a printed treble clef in bar 10) | wrong octave/clef for a few bars |
+| Rubber stamps and page-2 headers on old photocopies (band name, owner's address) read as staff text | Girl from Ipanema ("HELSINGBORGS STORBAND", "SLATTERGATAN 3", "3ALTD SAX") | stray text in the music |
+| A boxed rehearsal letter beside a word read together ("C" + "SOLI" → "CSOLI") | Girl from Ipanema | wrong text, rehearsal mark missing |
+| Faint bar lines on a photocopy's last line missed, so 7 bars become 3 overfull "check bars" | Girl from Ipanema, last line | bars merged, playback stumbles |
+| "Arranged by …" in a credits block joined to the composer instead of the arranger | Girl from Ipanema | credit in the wrong field |
+
 ## 0. Top priority: bars that hold more than their time signature
 
 Agreed with Jack, Nov 16 2026; partly built. Done: the validity pass (23a3d63) means MuseScore never refuses a

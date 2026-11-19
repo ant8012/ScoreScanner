@@ -62,8 +62,12 @@ enum LocalTextReader {
     let chordBoxes = firstChords.map { Box(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) }
     if header && first.miny > sp {
       // down to the first staff, leaving out the first line's chords
-      headerLines = try phrases(page: page, rows: 0..<Int(first.miny - 0.3 * sp), cols: 0..<page.width, sp: sp)
-        .filter { b in !chordBoxes.contains { overlaps($0, b) } }
+      let boxes = phrases(page: page, rows: 0..<Int(first.miny - 0.3 * sp), cols: 0..<page.width, sp: sp)
+      let touching = { (b: Box) in chordBoxes.contains { overlaps($0, b) } }
+      headerLines = try boxes.filter { !touching($0) }.map { try readPhrase(Phrase(box: $0), page: page, model: model) }
+      // a line with a word read as a chord inside it ("E♭" of "3rd E♭ Alto Saxophone") may still be the part's
+      // name; for the title and credits it stays out, as a chord row read as text makes a title of chords
+      let partChords = try boxes.filter { touching($0) && !chordRow($0, chordBoxes) }
         .map { try readPhrase(Phrase(box: $0), page: page, model: model) }
       if ProcessInfo.processInfo.environment["SCANNER_TEXT_DEBUG"] != nil {
         for l in headerLines { print("HEADER LINE \(l.box) \(String(format: "%.2f", l.score)) \"\(l.text)\"") }
@@ -73,8 +77,10 @@ enum LocalTextReader {
       headerUsed = found.used
       // a part printed on its own names its instrument at the top left ("Bass", "Piano"): the part's name, and
       // not staff text
-      if let label = headerLines.first(where: { l in
-        Double(l.box.x1) < 0.3 * Double(page.width) && l.score >= 0.8 && l.text.count <= 24
+      if let label = (headerLines + partChords).sorted(by: { ($0.box.y0, $0.box.x0) < ($1.box.y0, $1.box.x0) })
+        .first(where: { l in
+        Double(l.box.x0) < 0.15 * Double(page.width) && Double(l.box.x1) < 0.5 * Double(page.width)
+          && l.score >= 0.8 && l.text.count <= 24
           && InstrumentSounds.isInstrument(l.text) && !headerUsed.contains(where: { overlaps($0, l.box) })
       }) {
         partLabel = label.text
@@ -233,7 +239,10 @@ enum LocalTextReader {
     var names: (long: [String], short: [String])? = try partNames(page: page, staffs: geometries, model: model)
     // one part with no name beside its staff: the label at the top left names it
     if header, let label = partLabel, names?.long.count == 1, names?.long.first?.isEmpty ?? true {
-      names?.long = [label.capitalized]
+      // in title case, an ordinal kept as printed ("3rd Eb Alto Saxophone", not "3Rd")
+      names?.long = [label.split(separator: " ").map { w in
+        w.first?.isLetter == true ? w.prefix(1).uppercased() + w.dropFirst().lowercased() : w.lowercased()
+      }.joined(separator: " ")]
     }
     return AppleScoreTextAnalysis(
       route: route, routeNote: nil, metadata: metadata?.isEmpty == true ? nil : metadata,
@@ -429,6 +438,13 @@ enum LocalTextReader {
   }
 
   static let route = "On-device text reader (PP-OCRv6 small)"
+
+  /// A header line that is the first line's chords: chords fill most of it. A word read as a chord inside a longer
+  /// line ("E♭" of "3rd E♭ Alto Saxophone", "Arranged by …") leaves the line text.
+  static func chordRow(_ line: Box, _ chords: [Box]) -> Bool {
+    let width = chords.filter { overlaps($0, line) }.map { min($0.x1, line.x1) - max($0.x0, line.x0) }.reduce(0, +)
+    return width > 0 && Double(width) >= 0.5 * Double(line.x1 - line.x0)
+  }
 
   static func overlaps(_ a: Box, _ b: Box) -> Bool {
     min(a.x1, b.x1) > max(a.x0, b.x0) && min(a.y1, b.y1) > max(a.y0, b.y0)
