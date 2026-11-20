@@ -15,7 +15,9 @@ Parked for later; not started. Seen Nov 19 2026 on 0.1.21.
 | Issue | Seen in | Effect |
 | --- | --- | --- |
 | Multi-bar rests ("6", "3", "7" over a long rest) written as one bar | Candy (2nd alto part): 55 bars for 65 | every later bar misnumbered, D.S./Coda land wrong |
-| Hymn verse number ("1. Now") takes the first note | "Now Let Us Rejoice" | first syllable missing, left as staff text |
+| Hymn verse number ("1. Now") takes the first note | "Now Let Us Rejoice", "Ein Licht in dir geborgen" ("1. Ein", "3. Ein" on the pickup) | first syllable missing, left as staff text |
+| A word under two notes cut in two by the touching-words rule ("treibt" → "treil" / "ibt") | "Ein Licht in dir geborgen", verse 3 bar 4 | garbled syllables |
+| A 9-8 suspension ("C9 – 8") written as a dominant ninth | "Ein Licht in dir geborgen" bar 13 | C9 plays a B♭ that is not there; Jack's call (Cadd9 then C?) |
 | Dashed extension lines read into staff text ("play both times - - - ┐") | Just the Way You Are | junk characters in text |
 | One-bar drum repeats (% with bar counts) read as empty bars | Just the Way You Are, bars 7-13 | drums silent |
 | Handwritten jazz-font treble clef at line starts read as an alto clef | Candy, two systems | 7 bars a seventh low |
@@ -142,6 +144,10 @@ collect cases here until it is worth it.
 | Chords across bar lines (section 1) | see above |
 
 ## Fixed recently (for reference)
+
+0.1.24 (Nov 20): a hymn's verses stacked deeper than nine staff spaces are read (the third verse was lost, and its
+words left as staff text on the next line); staff text that repeats a lyric line's words is dropped on every lyric
+line, not only between a voice and its piano; "D7/4" (German hymnals) reads as D7sus4.
 
 0.1.21 (Nov 19): a page whose last staff ends at its foot no longer crashes the scan (2 of 200 sampled Real Book
 pages); chord-spelled syllables hyphenated on ("E - del - weiss") kept as lyrics;

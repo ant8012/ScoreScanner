@@ -15,8 +15,15 @@ public enum ChordText {
       "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8",
       "⁹": "9", "ᵇ": "b", "⁺": "+", "⁻": "-", "⁽": "(", "⁾": ")", "°": "o", "º": "o",
     ]
-    return String(text.flatMap { map[$0] ?? String($0) })
+    let plain = String(text.flatMap { map[$0] ?? String($0) })
+    // German and hymnal books print a suspended fourth over its seventh as a fraction, D⁷⁄₄ (D7/4): a slash with
+    // a 4 after a chord's number is the suspension, never a bass note (a bass is a letter)
+    return suspendedFourth.stringByReplacingMatches(
+      in: plain, range: NSRange(plain.startIndex..., in: plain), withTemplate: "sus4")
   }
+
+  private static let suspendedFourth = try! NSRegularExpression(
+    pattern: #"(?<=[A-G][b#♭♯]?[0-9]{1,2})[/⁄]4(?![0-9])"#)
 
   /// Lead sheets bracket an optional turnaround, `(Fm7 Bb13)`, so its first
   /// chord opens a parenthesis and its last one closes it. Those brackets are

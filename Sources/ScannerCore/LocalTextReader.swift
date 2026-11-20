@@ -94,14 +94,20 @@ enum LocalTextReader {
       .map { Box(x0: $0.x0, y0: $0.y0, x1: $0.x1, y1: $0.y1) }
     // the words sung between two staves of one system (a voice over its piano) stand where the lower staff's text
     // would, and are read as that too
+    // and so do the lower verses of a hymn's deep stack, which stand nearer the staff below than their own
     var sung: [(box: Box, text: String)] = []
     let lyrics = try readLyrics(scan.lyricWords, page: page, model: model, chords: acceptedChords) { w, text in
-      if w.betweenStaves { sung.append((Box(x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1), text)) }
+      sung.append((Box(x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1), text))
     }
-    /// Staff text that only repeats the lyric words it stands on ("Small" over the sung "Small").
+    /// Staff text that only repeats the lyric words it stands on ("Small" over the sung "Small", a verse's "2. Glut"
+    /// over its sung "Glut").
     func repeatsLyrics(_ phrase: Phrase, _ text: String) -> Bool {
       let letters = { (t: String) in t.lowercased().filter(\.isLetter) }
-      let under = sung.filter { overlaps($0.box, phrase.box) }.sorted { $0.box.x0 < $1.box.x0 }
+      // the words of the phrase's own line: a verse number's box can reach up into the verse above
+      let under = sung.filter { s in
+        let cy = Double(s.box.y0 + s.box.y1) / 2
+        return overlaps(s.box, phrase.box) && Double(phrase.box.y0) <= cy && cy <= Double(phrase.box.y1)
+      }.sorted { $0.box.x0 < $1.box.x0 }
       return !under.isEmpty && !sectionWords(text) && letters(text) == under.map { letters($0.text) }.joined()
     }
 

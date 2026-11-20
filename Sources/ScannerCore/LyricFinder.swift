@@ -52,7 +52,17 @@ public enum LyricFinder {
       let c0 = max(0, Int(st.x0 - sp)), c1 = min(page.width, Int(st.x1))
       guard r1 - r0 > Int(1.2 * sp), c1 > c0 else { continue }
       let between = below.map { $0.system == st.system && st.system >= 0 } ?? false
-      out += staffWords(page, rd, k, rows: r0..<r1, cols: c0..<c1).map { w in
+      var words = staffWords(page, rd, k, rows: r0..<r1, cols: c0..<c1)
+      // a hymn stacks its verses deeper than nine spaces: follow the stack on, line by line, down to the chord
+      // band of the staff below, as long as each line keeps to the spacing of the lines above it. Not under the
+      // page's last staff: nothing bounds it there, and what stands below is a block of further verses printed as
+      // prose, notes on the performance, or the copyright
+      if below != nil, limit - Double(r1) >= sp,
+        let deeper = staffWords(page, rd, k, rows: r0..<min(page.height, Int(limit)), cols: c0..<c1, stackFrom: r1)
+      {
+        words = deeper
+      }
+      out += words.map { w in
         var w = w
         w.betweenStaves = between
         return w
@@ -67,6 +77,15 @@ public enum LyricFinder {
 
   static func staffWords(_ page: Copista.Gray, _ rd: Copista.Reading, _ k: Int, rows: Range<Int>, cols: Range<Int>)
     -> [Word]
+  {
+    staffWords(page, rd, k, rows: rows, cols: cols, stackFrom: nil) ?? []
+  }
+
+  /// With `stackFrom`, the band reaches past the usual depth: lines starting below `stackFrom` are kept only while
+  /// they go on the stack of lines above (`stackedLines`), and the result is nil when none does, so the usual band
+  /// is used unchanged.
+  static func staffWords(_ page: Copista.Gray, _ rd: Copista.Reading, _ k: Int, rows: Range<Int>, cols: Range<Int>,
+                         stackFrom: Int?) -> [Word]?
   {
     let L = rd.layout, st = L.staves[k], sp = st.sp
     let w = cols.count, h = rows.count
@@ -130,7 +149,11 @@ public enum LyricFinder {
       .filter { Double($0.area) >= 0.03 * sp * sp && Double($0.h) <= 2.6 * sp }
       .map { Piece(x0: $0.x0 + cols.lowerBound, y0: $0.y0 + rows.lowerBound, x1: $0.x1 + cols.lowerBound,
                    y1: $0.y1 + rows.lowerBound) }
-    let lines = textLines(pieces, sp: sp)
+    var lines = textLines(pieces, sp: sp)
+    if let stackFrom {
+      guard let stacked = stackedLines(lines, from: stackFrom) else { return nil }
+      lines = stacked
+    }
     // notes on this staff, one per chord stack, left to right
     var heads: [(x: Double, id: String)] = []
     for s in L.syms.sorted(by: { $0.cx < $1.cx })
@@ -181,6 +204,37 @@ public enum LyricFinder {
       }
     }
     return lines.sorted { core($0).0 < core($1).0 }
+  }
+
+  /// The lines above `from`, then those reaching below it that go on the stack: each a line further at the spacing of the
+  /// two lines before it (within a quarter) and with letters of their height (within a third). Nil when no line
+  /// below `from` does: a verse stack needs two lines to set its spacing, and a line at another spacing or size is
+  /// other text (the footer, the next line's tempo or title).
+  static func stackedLines(_ lines: [[Piece]], from: Int) -> [[Piece]]? {
+    func core(_ line: [Piece]) -> (top: Int, foot: Int) {
+      let tops = line.map(\.y0).sorted(), bottoms = line.map(\.y1).sorted()
+      return (tops[tops.count / 2], bottoms[bottoms.count / 2])
+    }
+    var kept: [[Piece]] = []
+    var deeper = false
+    for line in lines {
+      let c = core(line)
+      // a line the usual band held whole; one it cut through must go on the stack too
+      if c.foot <= from {
+        kept.append(line)
+        continue
+      }
+      guard kept.count >= 2 else { break }
+      let last = core(kept[kept.count - 1]), before = core(kept[kept.count - 2])
+      let pitch = Double(last.top - before.top), height = Double(last.foot - last.top)
+      let step = Double(c.top - last.top), h = Double(c.foot - c.top)
+      guard height > 0, pitch > height, pitch <= 3 * height, step >= 0.75 * pitch, step <= 1.25 * pitch,
+        abs(h - height) <= 0.34 * height
+      else { break }
+      kept.append(line)
+      deeper = true
+    }
+    return deeper ? kept : nil
   }
 
   /// A line cut into words at gaps wider than a letter space, with its hyphens and extenders, each word placed on

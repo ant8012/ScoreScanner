@@ -25,6 +25,18 @@ struct LocalChordReaderTests {
     #expect(LocalChordReader.judged("C7sus4") == (["C7sus4"], .unusual))
   }
 
+  @Test func aSeventhOverFourIsTheSuspendedFourth() {
+    // hymnals print D⁷⁄₄ for D7sus4
+    #expect(LocalChordReader.judged("D7/4") == (["D7sus4"], .unusual))
+    #expect(LocalChordReader.judged("Bb7/4") == (["Bb7sus4"], .unusual))
+    #expect(ChordMusicXML.harmony("D7sus4", offset: 0)?.first("kind")?.text == "suspended-fourth")
+    // a bass note after the slash is still a bass, and a time signature is not a chord
+    #expect(LocalChordReader.judged("D7/A").chords == ["D7/A"])
+    #expect(LocalChordReader.judged("7/4").chords.isEmpty)
+    #expect(LocalChordReader.judged("6/9").chords.isEmpty)
+    #expect(LocalChordReader.judged("C6/9").chords == ["C6/9"])
+  }
+
   @Test func theModelInputIsFortyEightHighAndAtLeast320Wide() {
     let small = LocalChordReader.Image(width: 30, height: 20, pixels: [UInt8](repeating: 255, count: 600))
     let (data, width) = LocalChordReader.modelInput(small)
