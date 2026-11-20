@@ -40,6 +40,20 @@ Parked for later; not started. Seen Nov 19 2026 on 0.1.21.
 | Faint bar lines on a photocopy's last line missed, so 7 bars become 3 overfull "check bars" | Girl from Ipanema, last line | bars merged, playback stumbles |
 | "Arranged by …" in a credits block joined to the composer instead of the arranger | Girl from Ipanema | credit in the wrong field |
 
+## Nov 20: piano-vocal-guitar songbook pages (two photos from a songbook, test only)
+
+First pages with guitar chord diagrams over the voice staff. Seen on 0.1.24/0.1.25.
+
+| Issue | Seen in | Effect |
+| --- | --- | --- |
+| Guitar chord grids boxed as words by the chord finder; the small names above them mostly missed | both songs: 8 of 19 and 21 of 35 chords | most chords missing |
+| A slash bass printed under the grid ("(C# Bass)") never read | both songs | wrong root in playback |
+| A tilted bottom system reads its three staves as two | second song, page 1 | voice and piano merged |
+| A curled first system not found in the app's PDF render (also in 0.1.24) | second song, page 2 | first system lost |
+| "Words and Music by X" gives the composer "Words and Music" | both songs | wrong credit |
+| "To Coda" read together with the chord name beside it | second song | no jump, junk text |
+| Verse labels ("1 & 4.") written as staff text | second song | stray text |
+
 ## 0. Top priority: bars that hold more than their time signature
 
 Agreed with Jack, Nov 16 2026; partly built. Done: the validity pass (23a3d63) means MuseScore never refuses a
@@ -144,6 +158,11 @@ collect cases here until it is worth it.
 | Chords across bar lines (section 1) | see above |
 
 ## Fixed recently (for reference)
+
+0.1.25 (Nov 20): a voice staff no longer splits off from its piano into a system of its own where three lyric lines
+widen the gap and the photo is cropped tight or curls (a thin stroke that one staff's lines start at counts as the
+system's opening line at a tight-cropped page edge, and between an untraced staff's box and its first clef). The
+first songbook page reads 19 of 19 bars (was 22). Regression identical to 0.1.24.
 
 0.1.24 (Nov 20): a hymn's verses stacked deeper than nine staff spaces are read (the third verse was lost, and its
 words left as staff text on the next line); staff text that repeats a lyric line's words is dropped on every lyric

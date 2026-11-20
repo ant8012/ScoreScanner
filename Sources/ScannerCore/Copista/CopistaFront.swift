@@ -447,6 +447,59 @@ extension Copista {
       }
       var left = 0.0
       for x in stride(from: max(0, lo), through: hi, by: 2) { left = max(left, run(x)) }
+      // Where the plain search finds no opening line, a thin stroke with one staff's lines starting at it still is
+      // one, in two places the search leaves out:
+      // - a page cropped tight at the binding puts the line where the edge's run starts. The page edge runs on past
+      //   the staves, drifting sideways as the page curls; a system's opening line stops at its top staff or its
+      //   bottom one, with no ink a staff space either side of it beyond.
+      // - a staff whose lines were not traced has a box from its measures, which can start a few staff spaces left
+      //   of the lines: the line can lie between the box's start and the staff's first clef.
+      if left < inkLink {
+        func stops(_ x: Int, _ ya: Double, _ yb: Double) -> Bool {
+          !stride(from: x - Int(sp), through: x + Int(sp), by: 2).contains { inkRun(mask, x: Double($0), y0: ya, y1: yb) >= 0.2 }
+        }
+        // the staff's five lines run on from just right of the line: most columns hold four or more ink rows
+        func starts(_ st: Staff, _ x: Int) -> Bool {
+          let ya = max(0, pyRound(st.y0 - 1)), yb = min(mask.height, pyRound(st.y1 + 2))
+          let cols = (x + 3)...(x + max(4, Int(sp)))
+          let lined = cols.filter { c in c < mask.width && (ya..<yb).filter { mask[$0, c] }.count >= 4 }.count
+          return Double(lined) >= 0.7 * Double(cols.count)
+        }
+        // a line, not a band: paper beside it between the staves (left of it only where the clefs hug its right)
+        func thin(_ x: Int, right: Bool) -> Bool {
+          let ra = max(0, pyRound(y0)), rb = min(mask.height, pyRound(y1)), w = max(4, Int(sp))
+          func side(_ c0: Int, _ c1: Int) -> Bool {
+            let c0 = max(0, c0), c1 = min(mask.width, c1)
+            if c0 >= c1 { return true }
+            return Double((ra..<rb).filter { y in (c0..<c1).contains { mask[y, $0] } }.count) < 0.3 * Double(max(1, rb - ra))
+          }
+          return (!right || side(x + 4, x + w)) && side(x - w, x - 3)
+        }
+        func line(_ x: Int, right: Bool = true) -> Double {
+          let v = inkRun(mask, x: Double(x), y0: y0, y1: y1)
+          return v >= inkLink && thin(x, right: right) && (starts(a, x) || starts(b, x)) ? v : 0
+        }
+        if edge.contains(where: { $0 > 0 }) {
+          for x in stride(from: max(0, lo), through: hi, by: 2)
+          where stops(x, a.y0 - 3 * sp, a.y0 - 1.5 * sp) || stops(x, b.y1 + 1.5 * sp, b.y1 + 3 * sp) {
+            left = max(left, line(x))
+          }
+        }
+        // the first clef on a staff whose lines were not traced
+        func firstClef(_ st: Staff) -> Double? {
+          if st.lineX0 != nil { return nil }
+          var best: Double?
+          for s in syms where s.fam == "clef" && s.p >= 0.5 {
+            let (x0, top, _, bottom) = s.box
+            if top <= st.mid && st.mid <= bottom && st.x0 <= x0 && x0 <= st.x0 + 6 * st.sp { best = min(best ?? x0, x0) }
+          }
+          return best
+        }
+        let clefs = [firstClef(a), firstClef(b)].compactMap { $0 }
+        if let clef = clefs.min(), Int(clef) - 2 > hi {
+          for x in stride(from: hi + 1, through: Int(clef) - 2, by: 2) { left = max(left, line(x, right: false)) }
+        }
+      }
       let lines = syms.filter { s in
         s.fam == "barLine" && s.p >= 0.5 && s.staff < 0 && a.y0 - sp <= s.cy && s.cy <= a.y1 + sp &&
           max(a.x0, b.x0) <= s.cx && s.cx <= min(a.x1, b.x1)
