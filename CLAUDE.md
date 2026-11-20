@@ -5,8 +5,9 @@ release to Aria. `README.md` covers using the package.
 
 Rules that always apply:
 
-- **Private Cloud Compute only.** Never use the on-device Apple model, even as a fallback. Keep
-  `allowOnDeviceFallback` false.
+- **Aria uses the bundled on-device copisteria/PaddleOCR readers.** The legacy `.appleModel`
+  route, if explicitly tested, is Private Cloud Compute only: never fall back to the on-device
+  Apple model, and keep `allowOnDeviceFallback` false. Do not confuse Apple's model with ScannerCore's own local readers.
 - **Test only with the designated test scores** (on Jack's iPhone in ScoreScanner's `Documents/TestScores/`, plus
   the local `--scan-sample`). Never scan or commit sheet music found elsewhere on his Mac.
 - **Look at the images** (crops and detections drawn over the page) before diagnosing a vision bug.

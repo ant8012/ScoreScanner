@@ -1,5 +1,7 @@
 # Working on ScoreScanner
 
+> Release handoff, November 20, 2026: the latest public ScannerCore is **0.1.23** (`d14c2a2`), and Aria iOS 7.7.0 (17) and Android 1.4.0 (28) resolve it (Aria source `ce89f6c467`, committed locally, not pushed; builds validated and installed, not yet submitted). Still to check on a phone: scanning the Matrix (memory and time), Lady (drums, transposed parts by ear), and Android runtime. 0.1.20-0.1.23 (Nov 18-19): large orchestral scores and photocopies; hyphenated syllables, page turns without courtesy clefs, a crash at the page's foot; transposition from key signatures; clefs change only where printed (Real Book lines read as drums 52 of 200 pages -> 1); pages joined to the latest page laid out alike; instrument names found as whole words. What is still open: `tools/chordfind/REMAINING_ISSUES.md` ("Nov 19 stuff" first). How changes were checked, with a 0.1.23 baseline: `tools/writercheck/regression-kit/README.md` (local only). Aria uses the bundled on-device copisteria/PaddleOCR readers, not Apple's model. The Private Cloud Compute rule below applies only when explicitly exercising the legacy `.appleModel` route; it must not replace Aria's local readers. Package minimum remains iOS 16, while Aria's app target is iOS 17. Older `HANDOFF_TUPLETS.md` and `ANDROID_4GB_SCANNER_HANDOFF.md` carry follow-up banners. For current Aria binaries, device results, camera/screenshots and source publication gaps, see the local Aria `HANDOFF-SCAN.md` and `promo/scan-import/RELEASE_STATUS.md`.
+
 Start here if you are new to this repo, or an agent opening it for the first time. `README.md` covers using the
 package. This file covers changing it.
 
@@ -118,6 +120,10 @@ text, prefer Private Cloud Compute, allow on-device fallback (off), cloud reques
    folder: the same notes, rests and chords in order, and the same title, composer and part names.
 4. For notation changes, open the MusicXML in MuseScore 4 (`mscore -o out.mscz score.musicxml`, without `-f`).
    It should import with no "incomplete measure" errors.
+5. Before a release, compare a build with the last tag on the whole test set: the multi-part scores first, then
+   the 672 regression inputs and 200 Real Book pages (`tools/writercheck/regression-kit/`, on this Mac only; it
+   keeps 0.1.23's output as the baseline). Look at the page for every kind of change. Rules around the reader are
+   where most gains came from, and each new one has broken some other score at least once.
 
 ## Releasing to Aria
 
