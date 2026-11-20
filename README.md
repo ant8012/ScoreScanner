@@ -11,12 +11,8 @@ Reads printed sheet music (a photo, a camera scan or a PDF) into MusicXML on iPh
   read on the device too, with the standard PP-OCRv6 small recogniser, when `readStaffText` is on. Apple's
   Foundation Models on Private Cloud Compute (iOS 27) can read them instead (`textReader: .appleModel`).
 
-The repository holds two things:
-
-| Path | What it is |
-| --- | --- |
-| `Package.swift`, `Sources/`, `Tests/` | **ScannerCore**, the reader, as a Swift package. ScoreScanner and Aria both depend on it. It also builds for Android (Aria's Android app, through Skip): see "Android" below. |
-| `App/`, `ScoreScanner.xcodeproj` | **ScoreScanner**, the standalone app: library, scan screens, Verovio player, settings. |
+This repository holds **ScannerCore**, the reader, as a Swift package (`Package.swift`, `Sources/`, `Tests/`).
+Aria depends on it, and it also builds for Android (Aria's Android app, through Skip): see "Android" below.
 
 ## Using the reader
 
@@ -66,22 +62,10 @@ swift run -c release ScannerCheck --chord-crops page.jpg Sources/ScannerCore/Res
 swift run -c release ScannerCheck --read-image page.jpg Sources/ScannerCore/Resources/Models out.musicxml   # offline
 ```
 
-The app:
-
-```sh
-python3 tools/prepare_player.py   # stages the GPL-3.0 musicxml-player into App/SampleAssets/Player (git-ignored)
-xcodebuild -project ScoreScanner.xcodeproj -scheme ScoreScanner -configuration Debug \
-  -destination 'generic/platform=iOS Simulator' ARCHS=arm64 ONLY_ACTIVE_ARCH=NO build
-```
-
-Build arm64 only. Launch arguments for unattended scans: `--scan-pdf FILE`, `--scan-file FILE`,
-`--scan-sample` (a local `App/SampleAssets/sample.jpg`, not in git). Each scan's score, raw score, chord and text
-reports and chord crops land in the app's `Documents/Scans/<id>/`. Private Cloud Compute can throttle a
-simulator; test on a physical iPhone when it does.
 
 ## Releasing a reader change to Aria
 
-1. Change and test the reader here (`swift test`, a scan in the app).
+1. Change and test the reader here (`swift test`, a scan on the phone).
 2. Commit, then tag a version (`git tag 0.2.0`) and push.
 3. In Aria, update the ScoreScanner package to that version and run Aria's import check.
 
@@ -93,7 +77,6 @@ Aria's project navigator (a local override), and remove it before committing Ari
 - copisteria and copista-2m: Apache-2.0, `Vendor/copisteria/` (LICENSE, NOTICE, what changed in the port).
   Re-export the models with `tools/copista_export_onnx.py` and check them with `tools/copista_check_onnx.py`.
 - ONNX Runtime 1.27.0: MIT, `Vendor/onnxruntime/` (pinned source revision and file checksums).
-- musicxml-player (app only, not part of ScannerCore): GPL-3.0, fetched by `tools/prepare_player.py`.
 
 ## Android
 
@@ -114,7 +97,7 @@ Check an Android build: `skip android build --arch aarch64 --product ScannerCore
 
 ## License and source releases
 
-Original ScoreScanner and ScannerCore source is copyright 2026 Jack Gruber and licensed
-under GNU GPL version 3; see LICENSE. Third-party components retain their licenses and
-notices, listed in THIRD_PARTY_NOTICES.md. The app and Swift package stay together at
-https://github.com/hdi200/ScoreScanner. See SOURCE_RELEASE.md for the release checklist.
+Original ScannerCore source is copyright 2026 Jack Gruber and licensed under GNU GPL
+version 3; see LICENSE. Third-party components retain their licenses and notices, listed
+in THIRD_PARTY_NOTICES.md. The source is at https://github.com/hdi200/ScoreScanner. See
+SOURCE_RELEASE.md for the release checklist.

@@ -22,7 +22,7 @@ erase the music first. The finder now also runs in ScannerCore (`ChordFinder.swi
 Copisteria's inputs come from `ScannerCheck --copista PAGE MODELS OUT` (`layout.json`, `tok.json`, `dets.json`).
 Python 3.12 with numpy, scipy and Pillow.
 
-The app's debug build has `--crop-bench DIR [--routes pcc,device]`: it reads the exported crops in
+The ScoreScanner app's debug build (private app repository) has `--crop-bench DIR [--routes pcc,device]`: it reads the exported crops in
 `Documents/DIR` with Private Cloud Compute and/or the on-device model and writes `results-<route>.json`. It is
 compiled only in Debug and is not part of ScannerCore.
 

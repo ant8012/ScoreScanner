@@ -30,8 +30,3 @@ Source: https://github.com/microsoft/onnxruntime.
 The exact source revision, binary URL, SHA-256 and binding-file hashes are recorded in
 Vendor/onnxruntime/UPSTREAM.json. Preserve Vendor/onnxruntime/LICENSE and the original
 notices in Sources/OnnxRuntimeBindings and Sources/COnnxRuntimeAndroid.
-
-## ScoreScanner app player
-
-The standalone app uses musicxml-player (GPL-3.0), fetched by tools/prepare_player.py.
-It is not part of ScannerCore or its public package. Its notice remains in the app.

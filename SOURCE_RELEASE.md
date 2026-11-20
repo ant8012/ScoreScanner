@@ -1,7 +1,13 @@
 # ScoreScanner source releases
 
-ScoreScanner and its ScannerCore Swift package stay together in this repository:
-https://github.com/hdi200/ScoreScanner. No separate package repository is needed.
+This repository, https://github.com/hdi200/ScoreScanner, holds the ScannerCore Swift
+package. The standalone ScoreScanner app is kept in a separate private repository and is
+not part of source releases.
+
+In November 2026 the app was moved out and removed from this repository's history. Every
+tag (0.1.0 to 0.1.24) was recreated on the rewritten commits: each holds the same
+ScannerCore source as before, under a new commit ID. Pins recorded by commit ID before
+then (Aria's `Package.resolved`) must be resolved again.
 
 Original code is copyright 2026 Jack Gruber and licensed under GNU GPL version 3.
 Keep LICENSE, THIRD_PARTY_NOTICES.md, Licenses and the original Vendor notices in

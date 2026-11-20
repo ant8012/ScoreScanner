@@ -11,6 +11,7 @@ Rules that always apply:
 - **Test only with the designated test scores** (on Jack's iPhone in ScoreScanner's `Documents/TestScores/`, plus
   the local `--scan-sample`). Never scan or commit sheet music found elsewhere on his Mac.
 - **Look at the images** (crops and detections drawn over the page) before diagnosing a vision bug.
+- The ScoreScanner app is in the private sibling repository `../ScoreScannerApp`; never copy its code here.
 - Build the app through the shell, **arm64 only**. Run **one scan at a time**. Use the phone when Private Cloud
   Compute throttles the simulator; ask Jack to unlock it if `devicectl` says it's locked.
 - Changes reach Aria only through a pushed version tag. Don't change `ScoreReader`, `ScoreReadOptions` or

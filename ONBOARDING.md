@@ -10,7 +10,7 @@ package. This file covers changing it.
 | Product | Built from | Who uses it |
 | --- | --- | --- |
 | **ScannerCore** (Swift package library) | `Package.swift`, `Sources/ScannerCore/` | ScoreScanner, and Aria (`hdi200/aria`, `MuseReaderiOS`) by GitHub URL + version tag |
-| **ScoreScanner** (iOS app) | `App/`, `ScoreScanner.xcodeproj` (uses the package from `.`) | Ships on its own |
+| **ScoreScanner** (iOS app) | The private `ScoreScannerApp` repository, checked out beside this one (uses the package from `../ScoreScanner`) | Not released; the test bench for scans on the phone |
 | **ScannerCheck** (Mac command line) | `Sources/ScannerCheck/` | Checking reads on the Mac |
 
 The reader is changed **only here**. Older copies exist in `~/Downloads/homr/iPhoneScanner` (a clone of
@@ -61,7 +61,7 @@ sets memory and thread limits.
     composer "Test Composer", part "Melody", 59 notes.
   - `Li_Brahms_2_Die_Mainacht.pdf` (also `-p1`, `-p2`): OpenScore, 4 pages. Expect 1,086 notes, 102 bars,
     "Die Mainacht", Johannes Brahms, parts Voice and Piano.
-  - `App/SampleAssets/sample.jpg`, used by `--scan-sample`: local only, not in git.
+  - The app's `App/SampleAssets/sample.jpg`, used by `--scan-sample`: local only, not in git.
 - **Look at the images before diagnosing a vision bug.** Draw the crops or detections over the page and look at
   them before reasoning from recognised strings or numbers. Prefer the simplest change before adding a stage.
 - **Keep the package's iOS 16 minimum** (Aria's). FoundationModels code stays inside
@@ -76,40 +76,12 @@ swift build
 swift test                                  # ScannerCore tests (55)
 ```
 
-The app builds through the shell. Build **arm64 only**; a universal build fails to find ScannerCore for x86_64.
+### Scanning on the phone
 
-```sh
-python3 tools/prepare_player.py              # once: stages the GPL-3.0 player into App/SampleAssets/Player
-xcodebuild -project ScoreScanner.xcodeproj -scheme ScoreScanner -configuration Debug \
-  -destination 'generic/platform=iOS Simulator' -derivedDataPath <scratch>/dd ARCHS=arm64 ONLY_ACTIVE_ARCH=NO build
-```
-
-For the phone, use `-configuration Release -destination generic/platform=iOS -allowProvisioningUpdates`. The
-entitlements include Private Cloud Compute.
-
-### Running a scan without the UI
-
-Launch arguments: `--scan-file FILE`, `--scan-pdf FILE`, `--scan-sample`. The app logs
-`SCANNER_TIMING source=… wall=… cloudRequests=… chordRoute=…` when done (or `SCANNER_FULL ERROR`). Each scan's
-`score.musicxml`, `score.raw.musicxml`, `apple-chord-report.json` (`counts`: accepted/unusual/blocked/placed),
-`apple-score-text-report.json`, `chord-crops/` and `scan.json` land in the app's `Documents/Scans/<id>/`.
-
-- **iPhone** (preferred for cloud reading). The phone must be unlocked.
-  ```sh
-  xcrun devicectl device install app --device "Jack's iPhone" <dd>/Build/Products/Release-iphoneos/ScoreScanner.app
-  xcrun devicectl device process launch --device "Jack's iPhone" --terminate-existing --console \
-    com.jackgruber.ScoreScanner --scan-file TestScores/HarbourLights.jpg
-  xcrun devicectl device copy from --device "Jack's iPhone" --domain-type appDataContainer \
-    --domain-identifier com.jackgruber.ScoreScanner --source Documents/Scans/<id> --destination <scratch>/out
-  ```
-- **Simulator.** `xcrun simctl launch --console-pty <udid> com.jackgruber.ScoreScanner --scan-file /abs/path`.
-  Copy test scores off the phone first with `devicectl device copy from`. Private Cloud Compute can throttle a
-  simulator; move to the phone when it does.
-
-Run **one scan at a time**: overlapping launches get cut off and their reports land under the wrong scan.
-
-App settings (`App/ScanOptions.swift`, `SettingsKey`) map to `ScoreReadOptions`: read chord names, read staff
-text, prefer Private Cloud Compute, allow on-device fallback (off), cloud requests at once.
+Scans on the phone run through the ScoreScanner app (a separate private repository, `../ScoreScannerApp` on Jack's Mac). Its `README.md` covers building it (arm64 only, through the
+shell), the launch arguments for unattended scans (`--scan-file`, `--scan-pdf`, `--scan-sample`) and where each
+scan's MusicXML and reports land. Run **one scan at a time**: overlapping launches get cut off and their reports
+land under the wrong scan. On the Mac, `ScannerCheck` (see `README.md`) reads pages without the app.
 
 ### Checking a change
 
@@ -169,12 +141,11 @@ evidence inputs must be int64. `Vendor/copisteria/` records what the port change
 ## Third-party code
 
 copisteria and copista-2m (Apache-2.0) in `Vendor/copisteria/`. ONNX Runtime 1.27.0 (MIT) is downloaded as a
-pinned binary target. The app's player, musicxml-player (GPL-3.0), is fetched by `tools/prepare_player.py` and
-never committed. Licence texts the app shows are in `App/SampleAssets/Licenses/`.
+pinned binary target.
 
 ## Publishing ScannerCore source
 
 The original code is GPLv3; retain LICENSE and THIRD_PARTY_NOTICES.md when distributing.
-Keep the app and package in this existing ScoreScanner repository. Follow
+This repository holds ScannerCore only; the app is kept private and is not published. Follow
 SOURCE_RELEASE.md and make the exact shipped tag publicly readable before distributing
 Aria. Never publish local scans, training data, benchmark outputs or credentials.
