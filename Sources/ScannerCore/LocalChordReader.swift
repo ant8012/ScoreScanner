@@ -281,7 +281,7 @@ public enum LocalChordReader {
     if skipped.strays > 0 { notes.append("\(skipped.strays) single letters on another chord's beat were left out.") }
     let placed = ScanResult(
       xml: xml, rawXML: xml, staffs: scan.staffs, page: Data(), pageWidth: scan.pageWidth,
-      pageHeight: scan.pageHeight, seconds: scan.seconds + seconds, repairedMeasures: 0)
+      pageHeight: scan.pageHeight, seconds: scan.seconds + seconds, repairedMeasures: 0, bars: scan.bars)
     let analysis = AppleChordAnalysis(
       route: "On-device chord reader (PP-OCRv6 small, round 3)",
       routeNote: notes.isEmpty ? nil : notes.joined(separator: " "),

@@ -397,16 +397,19 @@ public enum ScoreReader {
         xml: scan.xml, rawXML: scan.rawXML, staffs: scan.staffs, page: Data(), pageWidth: scan.pageWidth,
         pageHeight: scan.pageHeight, seconds: scan.seconds, repairedMeasures: 0)
     }
+    // the chord and text passes add to the page's measures, never add or remove one: its bars stay where they are
     placed = ScanResult(
       xml: placed.xml, rawXML: placed.rawXML, staffs: placed.staffs, page: Data(), pageWidth: placed.pageWidth,
-      pageHeight: placed.pageHeight, seconds: placed.seconds + text.seconds, repairedMeasures: 0)
+      pageHeight: placed.pageHeight, seconds: placed.seconds + text.seconds, repairedMeasures: 0,
+      bars: ScoreBars.checked(scan.bars, against: placed.xml))
     if let lyrics = text.lyrics, !lyrics.isEmpty {
       // the syllables go onto the notes the scanner tagged
       let xml = try ScoreLyricsMusicXML.inserting(lyrics, into: placed.xml)
       placed = ScanResult(
         xml: xml, rawXML: xml, staffs: placed.staffs, page: placed.page, pageWidth: placed.pageWidth,
         pageHeight: placed.pageHeight, seconds: placed.seconds, repairedMeasures: placed.repairedMeasures,
-        chordWords: placed.chordWords, chordWordStaffs: placed.chordWordStaffs, lyricWords: placed.lyricWords)
+        chordWords: placed.chordWords, chordWordStaffs: placed.chordWordStaffs, lyricWords: placed.lyricWords,
+        bars: placed.bars)
     }
     return PageReading(scan: placed, chords: chords, text: text, cropImages: [])
   }
@@ -417,8 +420,10 @@ public enum ScoreReader {
   ) -> ScoreReading {
     let xml = ScoreValidityMusicXML.repaired(score.xml)
     let raw = score.rawXML == score.xml ? xml : ScoreValidityMusicXML.repaired(score.rawXML)
-    let score = DocumentScanResult(xml: xml, rawXML: raw, seconds: score.seconds, staffCount: score.staffCount,
+    var finalScore = DocumentScanResult(xml: xml, rawXML: raw, seconds: score.seconds, staffCount: score.staffCount,
       repairedMeasures: score.repairedMeasures, pageCount: score.pageCount)
+    finalScore.bars = ScoreBars.checked(score.bars, against: xml)
+    let score = finalScore
     var chords = chords
     chords.counts?.placedInScore = chordCount(in: score.xml)
     return ScoreReading(score: score, metadata: metadata, chords: chords, text: text, chordCrops: crops)

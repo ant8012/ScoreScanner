@@ -14,9 +14,13 @@ public struct DocumentScanResult: Sendable {
   public let pageCount: Int
   /// One printed name per part of the joined score ("" where none was read), when the pages' names were given.
   public var partLabels: [String] = []
+  /// Where each bar of the score is printed on its page (`ScoreBar`); empty when that could not be worked out
+  /// reliably, or for scores not read from pages.
+  public var bars: [ScoreBar] = []
   public init(_ scan: ScanResult) {
     xml = scan.xml; rawXML = scan.rawXML; seconds = scan.seconds
     staffCount = scan.staffs.count; repairedMeasures = scan.repairedMeasures; pageCount = 1
+    bars = scan.bars
   }
   public init(xml: Data, rawXML: Data, seconds: Double, staffCount: Int, repairedMeasures: Int, pageCount: Int) {
     self.xml = xml; self.rawXML = rawXML; self.seconds = seconds
@@ -39,6 +43,7 @@ public enum PDFScanner {
                                     staffCount: pages.reduce(0) { $0 + $1.staffs.count }, repairedMeasures: 0,
                                     pageCount: pages.count)
     result.partLabels = labels
+    result.bars = ScoreBars.joined(pages.map { ($0.bars, $0.xml) }, into: xml)
     return result
   }
 }
@@ -87,7 +92,7 @@ extension PDFScanner {
           pages.append(ScanResult(xml: scan.xml, rawXML: scan.rawXML, staffs: scan.staffs, page: Data(),
                                   pageWidth: 0, pageHeight: 0, seconds: scan.seconds, repairedMeasures: 0,
                                   chordWords: scan.chordWords, chordWordStaffs: scan.chordWordStaffs,
-                                  lyricWords: scan.lyricWords))
+                                  lyricWords: scan.lyricWords, bars: scan.bars))
         }
       } catch is CancellationError { throw CancellationError() }
       catch { throw ScannerError.invalid("Page \(number): \(error.localizedDescription)") }

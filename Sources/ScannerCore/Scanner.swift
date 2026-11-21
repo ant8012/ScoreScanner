@@ -24,6 +24,8 @@ public struct ScanResult: Sendable {
   var chordWordStaffs: [Int: LocalChordReader.WordStaff] = [:]
   /// The words under each staff that may be lyrics (`LyricFinder`), each with the note it is sung on.
   public var lyricWords: [LyricFinder.Word] = []
+  /// Where each bar is printed on the page (`ScoreBar`), when the layout and the written score agree on them.
+  public var bars: [ScoreBar] = []
 }
 
 /// Reads a page with copisteria (copista-2m): its detector and evidence models as ONNX, and its front end,
@@ -57,7 +59,7 @@ public enum Scanner {
     progress("Loading recognition models")
     let engine = try Copista.Engine(models: models)
     progress("Preparing the original image")
-    let page = Copista.straightened(try Copista.decodeGray(image))
+    let (page, straightening) = Copista.straightenedWithMap(try Copista.decodeGray(image))
     let read = try engine.read(page, title: title, carriedMeter: carriedMeter, progress: progress)
     guard read.xml.contains("<pitch>") else { throw ScannerError.invalid("No readable music was found") }
     progress("Finding chord symbols")
@@ -92,7 +94,8 @@ public enum Scanner {
     return ScanResult(
       xml: xml, rawXML: xml, staffs: staffs, page: Data(page.pixels), pageWidth: page.width,
       pageHeight: page.height, seconds: Date().timeIntervalSince(start), repairedMeasures: 0,
-      chordWords: chordWords, chordWordStaffs: wordStaffs, lyricWords: LyricFinder.find(page, read.reading))
+      chordWords: chordWords, chordWordStaffs: wordStaffs, lyricWords: LyricFinder.find(page, read.reading),
+      bars: ScoreBars.read(placed, xml: written, width: page.width, height: page.height, map: straightening))
   }
 
   /// The meter a page's score ends in, for `scan(carriedMeter:)` on the next page.

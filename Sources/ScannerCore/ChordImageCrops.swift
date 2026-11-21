@@ -97,7 +97,7 @@ public enum ChordImageCrops {
     return ScanResult(
       xml: xml, rawXML: xml, staffs: scan.staffs, page: keepPage ? scan.page : Data(),
       pageWidth: scan.pageWidth, pageHeight: scan.pageHeight, seconds: scan.seconds + additionalSeconds,
-      repairedMeasures: 0)
+      repairedMeasures: 0, bars: scan.bars)
   }
 
   static func staffs(from recognitions: [ChordCropRecognition]) -> [ChordStaff] {

@@ -73,6 +73,12 @@ do {
             ? try await ScoreReader.read(image: data, models: models, options: options) { print($0) }
             : try await ScoreReader.read(pdf: data, models: models, options: options) { print($0) }
         try reading.score.xml.write(to: output)
+        // where each bar is printed, beside the score (OUT.xml -> OUT.bars.json)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(reading.score.bars).write(
+            to: output.deletingPathExtension().appendingPathExtension("bars.json"))
+        print("BARS: \(reading.score.bars.count) bars placed on \(Set(reading.score.bars.map(\.page)).count) pages")
         let counts = reading.chords.counts
         print("READ PASS: \(reading.chordCount) chords in the score (accepted \(counts?.accepted ?? 0), unusual "
             + "\(counts?.unusual ?? 0), blocked \(counts?.blocked ?? 0)), chords \(String(format: "%.2f", reading.chords.seconds))s, "

@@ -45,6 +45,35 @@ struct CopistaStraightenTests {
     #expect(after.max()! - after.min()! <= 4)
   }
 
+  /// A line found on the straightened page, mapped back, lands on that line in the original: what lets a bar read on
+  /// the straightened page be shown on the photo.
+  func expectMapsBack(_ offset: @escaping (Double, Double) -> Double, tolerance: Double) {
+    let original = page(offset)
+    let (straight, map) = Copista.straightenedWithMap(original)
+    #expect(straight.pixels != original.pixels)
+    for x in stride(from: 200, through: 1400, by: 200) {
+      // the third staff's top line (printed at y 760 before the page bent)
+      guard let row = (700..<830).first(where: { straight[$0, x] < 128 }) else {
+        Issue.record("no line at x \(x)"); continue
+      }
+      let back = map.original(x: Double(x), y: Double(row))
+      #expect(back.x == Double(x))
+      #expect(abs(back.y - (760 + offset(Double(x), 760))) <= tolerance, "x \(x): \(back.y)")
+    }
+  }
+
+  @Test func aCurledPhotosPointsMapBackOntoTheOriginal() {
+    expectMapsBack({ x, y in
+      let dx = x - 800
+      return 4.2e-5 * dx * dx + tan((2 - 4 * y / 2000) * .pi / 180) * dx
+    }, tolerance: 3)
+  }
+
+  @Test func aTiltedScansPointsMapBackOntoTheOriginal() {
+    // half a degree, fanning a little: the plain straightener, not the curl one
+    expectMapsBack({ x, y in tan((0.6 - 0.2 * y / 2000) * .pi / 180) * (x - 800) }, tolerance: 2)
+  }
+
   @Test func aFlatScanTiltedEvenlyIsLeftAlone() {
     // 1.5 degrees everywhere: past the plain straightener's limit, but the tilt does not change across the page
     let tilted = page { x, _ in tan(1.5 * .pi / 180) * (x - 800) }

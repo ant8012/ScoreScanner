@@ -76,10 +76,12 @@ public enum ScoreMetadataMusicXML {
         title: title, composer: composer, arranger: arranger, tempo: tempo, partNames: partNames,
         partAbbreviations: partAbbreviations, directions: mapped, into: data)
     }
-    return DocumentScanResult(
+    var written = DocumentScanResult(
       xml: try write(result.xml), rawXML: try write(result.rawXML),
       seconds: result.seconds, staffCount: result.staffCount,
       repairedMeasures: result.repairedMeasures, pageCount: result.pageCount)
+    written.bars = result.bars
+    return written
   }
 
   private static func mappedDirections(

@@ -23,7 +23,15 @@ let reading = try await ScoreReader.read(pdf: data) { status in print(status) }
 try reading.score.xml.write(to: url)          // MusicXML, chords and text written in
 reading.title                                   // the printed title, if read
 reading.chordCount                              // chord symbols placed in the score
+reading.score.bars                              // where each measure is printed on its page (ScoreBar)
 ```
+
+`reading.score.bars` places each measure of the score on the page it was read from: its page, its line, and its
+outline from the top of the line's first staff to the bottom of its last, as four corners in fractions of the
+page's width and height. Corners are on the image as the reader received it, before straightening, so they follow a
+tilted or curled photo; a PDF page is the page as rendered. `ScoreBar` is `Codable`, to save beside a scan. The list
+is empty when the layout and the written score disagree on how many bars a line holds: no bar is better than a
+wrong one.
 
 `ScoreReader.read(image:)` reads one page image. `ScoreReadOptions` turns chord and staff-text reading on or off,
 picks the readers (`chordReader` and `textReader`, both `.onDevice` by default) and sets how many Private Cloud

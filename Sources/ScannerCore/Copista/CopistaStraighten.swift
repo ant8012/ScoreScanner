@@ -59,9 +59,22 @@ extension Copista {
   /// Past a degree the page is a phone photo of a book: its lines also bend along their length as the page curls
   /// toward the spine or the edge, which one tilt per band cannot undo. Such a page is measured again in strips
   /// across its width as well (`curled`), and each column is shifted by the slope summed from the middle out.
-  static func straightened(_ g: Gray) -> Gray {
+  static func straightened(_ g: Gray) -> Gray { straightenedWithMap(g).page }
+
+  /// How a straightened page sits on the page it came from. Straightening only moves pixels up or down their own
+  /// column, so a point keeps its x, and its y on the original is `y + offset(x, y)`.
+  struct StraightenMap {
+    let offset: (Double, Double) -> Double
+    static var identity: StraightenMap { StraightenMap { _, _ in 0 } }
+
+    /// A point of the straightened page on the original page.
+    func original(x: Double, y: Double) -> (x: Double, y: Double) { (x, y + offset(x, y)) }
+  }
+
+  /// `straightened`, with where each of its points lies on the original page (to show what was read there).
+  static func straightenedWithMap(_ g: Gray) -> (page: Gray, map: StraightenMap) {
     let W = g.width, H = g.height
-    guard W >= 200, H >= 200 else { return g }
+    guard W >= 200, H >= 200 else { return (g, .identity) }
     let thr = otsu(histogram(g).0, exact: true)
     let cx = Double(W) / 2
     let band = max(100, H / 11), step = band / 2
@@ -86,13 +99,13 @@ extension Copista {
       if y1 == H { break }
       y0 += step
     }
-    guard !angles.isEmpty else { return g }
+    guard !angles.isEmpty else { return (g, .identity) }
     let smooth = medianOfThree(angles)
     let steepest = smooth.map(abs).max() ?? 0
     let lineDistance = staffLineDistance(g, threshold: thr)
     let drift = 0.8 * Double(W) * tan(steepest * .pi / 180) / lineDistance
-    guard steepest >= straightenMinDegrees, drift >= straightenMinShiftSp else { return g }
-    if steepest > straightenMaxDegrees { return curled(g, threshold: thr) ?? g }
+    guard steepest >= straightenMinDegrees, drift >= straightenMinShiftSp else { return (g, .identity) }
+    if steepest > straightenMaxDegrees { return curled(g, threshold: thr) ?? (g, .identity) }
     func angle(at y: Double) -> Double {
       if y <= centers[0] { return smooth[0] }
       if y >= centers[centers.count - 1] { return smooth[smooth.count - 1] }
@@ -117,14 +130,16 @@ extension Copista {
         }
       }
     }
-    return Gray(width: W, height: H, pixels: out)
+    // the same shift as each row above
+    let map = StraightenMap { x, y in (x - cx) * tan(angle(at: y.rounded()) * .pi / 180) }
+    return (Gray(width: W, height: H, pixels: out), map)
   }
 
   /// A curled page straightened: the tilt measured per band and per strip across the width, each strip's tilts
   /// taken as the median of three bands, and every pixel moved by the slope summed from the page's middle out to
   /// its column (between strip middles the slope changes linearly). `nil` when too little of the page has ink, or
   /// the tilt hardly changes across it (a flat scan).
-  static func curled(_ g: Gray, threshold thr: Int) -> Gray? {
+  static func curled(_ g: Gray, threshold thr: Int) -> (page: Gray, map: StraightenMap)? {
     let W = g.width, H = g.height
     let band = max(100, H / 11), step = band / 2
     let n = max(1, curlStrips)
@@ -181,22 +196,26 @@ extension Copista {
       }
     }
     let cx = W / 2
+    // each column's shift in one row: the slope summed from the middle out
+    func fillShift(row y: Double, into shift: inout [Double]) {
+      let t = slopes(at: y)
+      func slope(_ x: Double) -> Double {
+        if x <= mids[0] { return t[0] }
+        if x >= mids[n - 1] { return t[n - 1] }
+        let k = min(n - 2, Int((x - mids[0]) / width))
+        let f = (x - mids[k]) / width
+        return t[k] * (1 - f) + t[k + 1] * f
+      }
+      shift[cx] = 0
+      for x in stride(from: cx + 1, to: W, by: 1) { shift[x] = shift[x - 1] + slope(Double(x) - 0.5) }
+      for x in stride(from: cx - 1, through: 0, by: -1) { shift[x] = shift[x + 1] - slope(Double(x) + 0.5) }
+    }
     var out = [UInt8](repeating: 255, count: W * H)
     var shift = [Double](repeating: 0, count: W)
     g.pixels.withUnsafeBufferPointer { src in
       out.withUnsafeMutableBufferPointer { dst in
         for y in 0..<H {
-          let t = slopes(at: Double(y))
-          func slope(_ x: Double) -> Double {
-            if x <= mids[0] { return t[0] }
-            if x >= mids[n - 1] { return t[n - 1] }
-            let k = min(n - 2, Int((x - mids[0]) / width))
-            let f = (x - mids[k]) / width
-            return t[k] * (1 - f) + t[k + 1] * f
-          }
-          shift[cx] = 0
-          for x in stride(from: cx + 1, to: W, by: 1) { shift[x] = shift[x - 1] + slope(Double(x) - 0.5) }
-          for x in stride(from: cx - 1, through: 0, by: -1) { shift[x] = shift[x + 1] - slope(Double(x) + 0.5) }
+          fillShift(row: Double(y), into: &shift)
           let o = y * W
           for x in 0..<W {
             let sy = Double(y) + shift[x]
@@ -208,7 +227,12 @@ extension Copista {
         }
       }
     }
-    return Gray(width: W, height: H, pixels: out)
+    let map = StraightenMap { x, y in
+      var row = [Double](repeating: 0, count: W)
+      fillShift(row: max(0, min(Double(H - 1), y.rounded())), into: &row)
+      return row[max(0, min(W - 1, Int(x.rounded())))]
+    }
+    return (Gray(width: W, height: H, pixels: out), map)
   }
 
   /// The distance from one staff line to the next, in pixels: the commonest dark run down the page's columns (a line's
