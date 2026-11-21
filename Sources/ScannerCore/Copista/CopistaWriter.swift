@@ -41,6 +41,37 @@ extension Copista {
     }
   }
 
+  /// MuseScore hangs a grace note on the note after it. A grace note with no note after it in its bar and voice (cue
+  /// notes read as graces, running into a rest or the bar line) has nothing to hang on, and a slur ending on it is
+  /// left without a parent: MuseScore, Aria's engine included, crashes laying it out. Such a slur is dropped at both
+  /// ends; every other slur is left as the reader paired it.
+  static func dropDanglingGraceSlurs(_ voices: [[Event]]) {
+    var dangling: [(Event, Int)] = []
+    for evs in voices {
+      for (i, e) in evs.enumerated() where e.grace != "none" && !e.slurs.isEmpty {
+        if evs[(i + 1)...].contains(where: { $0.grace == "none" && $0.kind == "note" }) { continue }
+        dangling += e.slurs.map { (e, $0.1) }
+      }
+    }
+    if dangling.isEmpty { return }
+    // the other end of each: the next stop of that number after a start, the last start before a stop
+    let all = voices.joined().filter { !$0.slurs.isEmpty }
+    for (e, num) in dangling {
+      guard let at = all.firstIndex(where: { $0 === e }) else { continue }
+      if e.slurs.contains(where: { $0 == ("start", num) }) {
+        if let z = all[(at + 1)...].first(where: { $0.slurs.contains { $0 == ("stop", num) } }) {
+          if let i = z.slurs.firstIndex(where: { $0 == ("stop", num) }) { z.slurs.remove(at: i) }
+        }
+      }
+      if e.slurs.contains(where: { $0 == ("stop", num) }) {
+        if let a = all[..<at].last(where: { $0.slurs.contains { $0 == ("start", num) } }) {
+          if let i = a.slurs.firstIndex(where: { $0 == ("start", num) }) { a.slurs.remove(at: i) }
+        }
+      }
+      e.slurs.removeAll { $0.1 == num }
+    }
+  }
+
   final class Event {
     var x: Double
     var kind: String
@@ -1799,6 +1830,7 @@ extension Copista {
 
       for (n, (pl, measures)) in zip(plans, built).enumerated() {
         let part = root.sub("part", nil, [("id", "P\(n + 1)")])
+        dropDanglingGraceSlurs(measures.joined().compactMap { $0 }.flatMap { st in st.voices.order.sorted().map { st.voices[$0]! } })
         var lastKey: Int?, lastTime: String?, lastClefs = [String?](repeating: nil, count: pl.count)
         var meterShown = false
         var number = 0
@@ -1928,6 +1960,13 @@ extension Copista {
                   direction(meas, dirs.removeFirst(), sNo)
                 }
                 let dur = e.kind == "mrest" ? barEnd : e.dur
+                // a length the bar fit settled on is what plays: the written value follows it (a dotted half whose dot
+                // went unread is written as a half lasting three beats otherwise, and players that go by the note's
+                // value rather than its duration pad or spill the bar)
+                if (e.kind == "note" || e.kind == "rest") && e.grace == "none" && e.tup == "none" && Q.zero < dur
+                  && dur != Vocab.duration(e.typ, e.dots, e.tup), let fit = fitValue(dur) {
+                  e.typ = fit.0; e.dots = fit.1
+                }
                 if e.kind == "gap" {
                   if Q.zero < dur {
                     let fw = meas.sub("forward")

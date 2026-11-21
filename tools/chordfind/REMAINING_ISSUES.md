@@ -55,6 +55,11 @@ First pages with guitar chord diagrams over the voice staff. Seen on 0.1.24/0.1.
 | The outermost strip of a strongly curled page (the last 5% by the spine or edge) stays bent: a chord or note right at the edge can be missed | real-scan photos, Merry-Go-Round p2 | rare, left as is |
 | "Words and Music by X" gives the composer "Words and Music" | both songs | wrong credit |
 | "To Coda" read together with the chord name beside it | second song | no jump, junk text |
+| Third song, Morning Has Broken (Nov 21): third system's voice split from its piano, its piano joined to the fourth system (30 of 33 bars, piano in 2 parts) | Morning Has Broken | fixed, uncommitted: 33 of 33, voice + piano |
+| A part starting after the first system had no meter in bar 1 (4/4 assumed, hidden rests padded every staff) | Morning Has Broken; ~45 Real Book pages with a late second part | open: the fix was dropped Nov 21 (it broke the Matrix both ways tried); needs a narrower version |
+| Dotted halves read as halves, lengthened by bar-fit but still written "half" (Aria spills the bar) | Morning Has Broken | fixed, uncommitted: written value follows the length |
+| Chord names under a staff space tall in a 1,900 px photo (18 of 30 read); diagrams blur into pieces and come out as junk words the reader rejects | Morning Has Broken | limit of the photo: a sharper photo is the fix |
+| Slurs on cue notes read as grace notes, with no note after them in the bar, crash MuseScore and Aria on open (segfault laying out the slur) | Singin' in the Bathtub (BandMusic flute part, Nov 21) | fixed, uncommitted: those slurs are dropped (`dropDanglingGraceSlurs`); 3 Real Book pages lose 1-2 slur marks |
 | Verse labels ("1 & 4.") written as staff text | second song | stray text |
 
 ## 0. Top priority: bars that hold more than their time signature

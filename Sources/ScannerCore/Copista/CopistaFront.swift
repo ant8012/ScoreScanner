@@ -87,7 +87,7 @@ extension Copista {
   enum Front {
     static let mergeIoU = 0.5, measureMinP = 0.25, measureMinW = 2.0, measureLowP = 0.08, grpMinP = 0.3
     static let alignTolSp = 2.0, alignFrac = 0.7, assignMaxSp = 10.0, emptyBarMaxSp = 4.0, courtesyMaxSp = 3.0
-    static let inkLink = 0.85, inkSplit = 0.4, staffPaperTol = 0.04, pale = 0.12
+    static let inkLink = 0.85, inkSplit = 0.4, inkSplitBars = 0.3, staffPaperTol = 0.04, pale = 0.12
 
     static func median<T: Comparable>(index values: [T]) -> T { values.sorted()[values.count / 2] }
 
@@ -501,12 +501,19 @@ extension Copista {
         // straightened from a curl, the lines can run into the shadow at the binding, so where they start says
         // nothing about where the system starts
         let edgeEnd = max(edge.max() ?? 0, sheetLeft)
+        // (lines traced from the edge, through a shadow or another page's staves showing through, say nothing about
+        // where the staff starts: its clef is anywhere before its first note)
         func firstClef(_ st: Staff) -> Double? {
           if let x0 = st.lineX0, x0 > Double(edgeEnd + away) { return nil }
+          var reach = st.x0 + 6 * st.sp
+          if st.lineX0 != nil {
+            let notes = syms.filter { ($0.fam == "note" || $0.fam == "rest") && $0.p >= 0.5 && st.y0 - st.sp <= $0.cy && $0.cy <= st.y1 + st.sp }
+            reach = max(reach, notes.map { $0.box.0 }.min() ?? st.x0 + 0.25 * (st.x1 - st.x0))
+          }
           var best: Double?
           for s in syms where s.fam == "clef" && s.p >= 0.5 {
             let (x0, top, _, bottom) = s.box
-            if top <= st.mid && st.mid <= bottom && st.x0 <= x0 && x0 <= st.x0 + 6 * st.sp { best = min(best ?? x0, x0) }
+            if top <= st.mid && st.mid <= bottom && st.x0 <= x0 && x0 <= reach { best = min(best ?? x0, x0) }
           }
           return best
         }
@@ -691,7 +698,9 @@ extension Copista {
           opening[k - 1] = max(left, line)
           if left >= inkLink || line >= inkLink || bars >= 0.5 {
             decided[k - 1] = true
-          } else if left < inkSplit && bars < 0.1 {
+          } else if left < inkSplit && bars < inkSplitBars {
+            // no opening line, and at most one bar line in four crossing the gap (a page edge's shadow running down
+            // past a system's last bar line crosses every gap): two systems
             decided[k - 1] = false
           } else if braced(syms, a, b) {
             decided[k - 1] = true
