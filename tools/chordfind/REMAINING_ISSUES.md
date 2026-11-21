@@ -46,7 +46,9 @@ First pages with guitar chord diagrams over the voice staff. Seen on 0.1.24/0.1.
 
 | Issue | Seen in | Effect |
 | --- | --- | --- |
-| Guitar chord grids boxed as words by the chord finder; the small names above them mostly missed | both songs: 8 of 19 and 21 of 35 chords | most chords missing |
+| ~~Guitar chord grids boxed as words; the names above them mostly missed~~ | second song 22 -> 28 of 35 chords (not yet committed) | diagrams recognised and ignored; a name touching one split off; a name on one belongs to the staff below |
+| A name joined to a diagram's open-string "o" under it reads as nothing (two D's in the second song) | second song | 2-3 chords missing; tried dropping small marks on the nut: no gain, cost a chord, taken out |
+| First song's names are under a staff space tall and blurred onto their diagrams | first song: 9 of 19 | limit of the photo, left as is (Jack, Nov 20) |
 | A slash bass printed under the grid ("(C# Bass)") never read | both songs | wrong root in playback |
 | ~~A tilted bottom system reads its three staves as two~~ | second song, page 1 | fixed, not yet tagged (curled photos straightened) |
 | ~~A curled first system not found in the app's PDF render (also in 0.1.24)~~ | second song, page 2 | fixed, not yet tagged: 30 of 30 bars |

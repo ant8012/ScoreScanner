@@ -132,4 +132,31 @@ struct ChordFinderTests {
                                  parameters: before)
     #expect(texts(found, staff: 0).count > 2)
   }
+
+  // MARK: chord diagrams
+
+  /// A piano-vocal-guitar page: a guitar chord diagram over the voice staff with its name touching the diagram's top
+  /// line, the diagram lifting the name close to the staff above.
+  @Test func aChordNameOnADiagramIsFoundForTheStaffBelow() {
+    var page = Page(600, 400)
+    page.fill(220, 198, 232, 225)                                     // D, touching the nut
+    for i in 0..<6 { page.fill(200 + 12 * i, 225, 202 + 12 * i, 276) }  // six strings
+    page.fill(200, 225, 262, 228)                                     // the nut
+    for y in [237, 249, 261, 273] { page.fill(200, y, 262, y + 2) }    // four frets
+    page.fill(222, 305, 232, 313)                                     // a note on the voice staff
+    page.fill(222, 165, 232, 173)                                     // and one on the staff above
+    let syms = [
+      ChordFinder.Symbol(cls: "noteheadBlack", box: ChordFinder.Box(222, 165, 232, 173), staff: 0, bar: 0, p: 0.99),
+      ChordFinder.Symbol(cls: "noteheadBlack", box: ChordFinder.Box(222, 305, 232, 313), staff: 1, bar: 0, p: 0.99),
+    ]
+    let layout = ChordFinder.Layout(staves: [staff(150), staff(300)], syms: syms, sp: 10,
+                                    tokens: [0: ChordFinder.Token(onset: 0, real: 1, time: nil),
+                                             1: ChordFinder.Token(onset: 0, real: 1, time: nil)])
+    let found = ChordFinder.find(gray: page.gray, width: page.width, height: page.height, layout: layout)
+    let words = texts(found, staff: 1)
+    #expect(words.count == 1)
+    #expect(words.first.map { ($0.x0, $0.y0, $0.x1, $0.y1) } ?? (0, 0, 0, 0) == (220, 198, 232, 224))   // less the row that touches the nut
+    // the diagram itself is never a word
+    #expect(!found.contains { $0.x1 - $0.x0 > 40 })
+  }
 }

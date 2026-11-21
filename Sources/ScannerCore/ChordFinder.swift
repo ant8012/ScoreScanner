@@ -234,15 +234,75 @@ public enum ChordFinder {
     return Double(inside) / Double((h - 2 * t) * (w - 2 * t)) < 0.35
   }
 
+  /// A guitar chord diagram, as piano-vocal-guitar books print over each chord name: a grid of at least four lines
+  /// across (the nut and the frets) and four down (the strings), evenly spaced and the same length. Its box within
+  /// the piece, or nil.
+  static func diagram(_ pix: [Bool], w: Int, h: Int, sp: Double) -> Component? {
+    // rows a long run crosses, joined into lines: (top, bottom, left, right)
+    var lines: [(Int, Int, Int, Int)] = []
+    for y in 0..<h {
+      var best = (0, 0), x = 0
+      while x < w {
+        if !pix[y * w + x] { x += 1; continue }
+        let s = x
+        while x < w && pix[y * w + x] { x += 1 }
+        if x - s > best.1 - best.0 { best = (s, x) }
+      }
+      guard Double(best.1 - best.0) >= 2 * sp else { continue }
+      if let last = lines.last, last.1 == y - 1 {
+        lines[lines.count - 1] = (last.0, y, min(last.2, best.0), max(last.3, best.1))
+      } else {
+        lines.append((y, y, best.0, best.1))
+      }
+    }
+    let tol = 0.3 * sp
+    for (i, nut) in lines.enumerated() {
+      var grid = [nut]
+      for l in lines[(i + 1)...] where abs(Double(l.2 - nut.2)) <= tol && abs(Double(l.3 - nut.3)) <= tol {
+        let gap = Double(l.0 - grid[grid.count - 1].1)
+        if gap < 0.3 * sp { continue }
+        if gap > 2 * sp { break }
+        grid.append(l)
+      }
+      guard grid.count >= 4 else { continue }
+      let gy0 = nut.0, gy1 = grid[grid.count - 1].1 + 1, gx0 = nut.2, gx1 = nut.3
+      // strings: columns inked from the nut to the last fret, joined into lines
+      var strings = 0, prev = -2
+      for x in gx0..<gx1 where (gy0..<gy1).filter({ pix[$0 * w + x] }).count >= Int(0.9 * Double(gy1 - gy0)) {
+        if x != prev + 1 { strings += 1 }
+        prev = x
+      }
+      if strings >= 4 { return Component(x0: gx0, y0: gy0, x1: gx1, y1: gy1, area: 0) }
+    }
+    return nil
+  }
+
   static func components(_ mask: [Bool], width: Int, height: Int, sp: Double, p: Parameters)
-    -> (comps: [Component], frames: [Component])
+    -> (comps: [Component], frames: [Component], diagrams: [Component])
   {
-    var out: [Component] = [], frames: [Component] = []
+    var out: [Component] = [], frames: [Component] = [], diagrams: [Component] = []
     for (comp, pix) in label8(mask, width: width, height: height) {
       var c = comp
       let h = Double(c.h), w = Double(c.w)
       if h <= 4 * sp && w <= 4 * sp { c.holes = holes(pix, w: c.w, h: c.h) }
       if Double(c.area) < p.speck * sp * sp { continue }
+      // A chord diagram is never read, but its name often touches the nut: what stands on the grid is pieces of
+      // its own.
+      if h >= 3 * sp && w >= 2 * sp, let g = diagram(pix, w: c.w, h: c.h, sp: sp) {
+        diagrams.append(Component(x0: c.x0 + g.x0, y0: c.y0 + g.y0, x1: c.x0 + g.x1, y1: c.y0 + g.y1, area: 0))
+        if g.y0 >= 2 {
+          let (sub, subFrames, _) = components(Array(pix[0..<((g.y0 - 1) * c.w)]), width: c.w, height: g.y0 - 1,
+                                               sp: sp, p: p)
+          func moved(_ s: Component) -> Component {
+            var s = s
+            s.x0 += c.x0; s.x1 += c.x0; s.y0 += c.y0; s.y1 += c.y0
+            return s
+          }
+          out += sub.map(moved)
+          frames += subFrames.map(moved)
+        }
+        continue
+      }
       if h >= p.stemH * sp && w <= p.stemW * sp {
         c.thin = true
       } else if h <= p.ledgerH * sp && p.ledgerW * sp <= w && w <= 3.5 * sp {
@@ -257,7 +317,7 @@ public enum ChordFinder {
       }
       out.append(c)
     }
-    return (out, frames)
+    return (out, frames, diagrams)
   }
 
   // MARK: words
@@ -516,7 +576,8 @@ public enum ChordFinder {
     var prevBottom = 0.0
 
     struct Line {
-      let ord: Int, k: Int, top: Int, left: Int, kept: [Component], frames: [Component], letterHeight: Double?
+      let ord: Int, k: Int, top: Int, left: Int, kept: [Component], frames: [Component], diagrams: [Component],
+        letterHeight: Double?
     }
     var lines: [Line] = []
     for (ord, k) in order.enumerated() {
@@ -532,7 +593,7 @@ public enum ChordFinder {
       if rh <= 0 || rw <= 0 { continue }
       var region = [Bool](repeating: false, count: rh * rw)
       for y in 0..<rh { for x in 0..<rw { region[y * rw + x] = clean[(top + y) * W + left + x] } }
-      var (comps, frames) = components(region, width: rw, height: rh, sp: sp, p: p)
+      var (comps, frames, diagrams) = components(region, width: rw, height: rh, sp: sp, p: p)
 
       // A thin sliver touching a notehead is what is left of its stem once the head is erased.
       for j in comps.indices {
@@ -558,7 +619,8 @@ public enum ChordFinder {
         Double(c.h) > 0.6 * sp && (st.y0 - Double(top)) - Double(c.y0 + c.y1) / 2 <= p.chordBand * sp
       }.map { Double($0.h) }
       let letterHeight: Double? = band.isEmpty ? nil : percentile(band, p.letterPct)
-      lines.append(Line(ord: ord, k: k, top: top, left: left, kept: kept, frames: frames, letterHeight: letterHeight))
+      lines.append(Line(ord: ord, k: k, top: top, left: left, kept: kept, frames: frames, diagrams: diagrams,
+                        letterHeight: letterHeight))
     }
 
     // Letter spacing measured over the whole page's chord rows: a loosely set font (Real Book 3, "B m7 b5") spaces
@@ -604,10 +666,17 @@ public enum ChordFinder {
       let letter = found.isEmpty ? 1.5 * sp : median(found.map { Double($0.y1 - $0.y0) })
       for j in found.indices where found[j].cx < first - 1.5 * sp { found[j].kind = .beforeMusic }
 
-      // Text belongs to the staff it sits closest to: lyrics hang below the line above.
+      // Text belongs to the staff it sits closest to: lyrics hang below the line above. A chord name standing on a
+      // chord diagram belongs to the staff under the diagram, however high the diagram lifts it.
+      func onDiagram(_ w: Proposal) -> Bool {
+        line.diagrams.contains { d in
+          let dx0 = Double(d.x0 + left), dx1 = Double(d.x1 + left), dy0 = Double(d.y0 + top)
+          return dx0 - sp <= w.cx && w.cx <= dx1 + sp && -0.5 * sp <= dy0 - Double(w.y1) && dy0 - Double(w.y1) <= 2 * sp
+        }
+      }
       if ord > 0 {
         let aboveBottom = L.staves[order[ord - 1]].y1
-        for j in found.indices where found[j].kind == .text {
+        for j in found.indices where found[j].kind == .text && !onDiagram(found[j]) {
           let c = Double(found[j].y0 + found[j].y1) / 2
           if c - aboveBottom < 0.6 * (st.y0 - c) { found[j].kind = .lineAbove }
         }
