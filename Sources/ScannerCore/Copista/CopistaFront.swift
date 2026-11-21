@@ -86,7 +86,7 @@ extension Copista {
 
   enum Front {
     static let mergeIoU = 0.5, measureMinP = 0.25, measureMinW = 2.0, measureLowP = 0.08, grpMinP = 0.3
-    static let alignTolSp = 2.0, alignFrac = 0.7, assignMaxSp = 10.0, emptyBarMaxSp = 4.0
+    static let alignTolSp = 2.0, alignFrac = 0.7, assignMaxSp = 10.0, emptyBarMaxSp = 4.0, courtesyMaxSp = 3.0
     static let inkLink = 0.85, inkSplit = 0.4, staffPaperTol = 0.04, pale = 0.12
 
     static func median<T: Comparable>(index values: [T]) -> T { values.sorted()[values.count / 2] }
@@ -359,6 +359,13 @@ extension Copista {
     }
 
     // MARK: ink between staves
+    /// A staff space past the later of two staves' line starts. A brace can reach the lines of the staff beside it,
+    /// so they seem to start at the brace, a little left of the system's opening line: searches that stop a staff
+    /// space past the earlier start miss that line.
+    static func laterStart(_ a: Staff, _ b: Staff) -> Int {
+      Int([a, b].map { st in st.lineX0.map { max(st.x0, $0) } ?? st.x0 }.max()! + (a.sp + b.sp) / 2)
+    }
+
     static func leftSpan(_ a: Staff, _ b: Staff, pageLeft: Double, lines: Bool = false) -> (Int, Int) {
       let sp = (a.sp + b.sp) / 2
       func start(_ st: Staff) -> Double { lines && st.lineX0 != nil ? max(st.x0, st.lineX0!) : st.x0 }
@@ -479,15 +486,23 @@ extension Copista {
           let v = inkRun(mask, x: Double(x), y0: y0, y1: y1)
           return v >= inkLink && thin(x, right: right) && (starts(a, x) || starts(b, x)) ? v : 0
         }
+        // - a brace can reach a staff's lines, so they seem to start at the brace, a little left of the line
+        let later = laterStart(a, b)
+        if later > hi {
+          for x in (hi + 1)...later { left = max(left, line(x)) }
+        }
         if edge.contains(where: { $0 > 0 }) {
           for x in stride(from: max(0, lo), through: hi, by: 2)
           where stops(x, a.y0 - 3 * sp, a.y0 - 1.5 * sp) || stops(x, b.y1 + 1.5 * sp, b.y1 + 3 * sp) {
             left = max(left, line(x))
           }
         }
-        // the first clef on a staff whose lines were not traced
+        // the first clef on a staff whose lines were not traced, or were traced from the sheet's edge: on a page
+        // straightened from a curl, the lines can run into the shadow at the binding, so where they start says
+        // nothing about where the system starts
+        let edgeEnd = max(edge.max() ?? 0, sheetLeft)
         func firstClef(_ st: Staff) -> Double? {
-          if st.lineX0 != nil { return nil }
+          if let x0 = st.lineX0, x0 > Double(edgeEnd + away) { return nil }
           var best: Double?
           for s in syms where s.fam == "clef" && s.p >= 0.5 {
             let (x0, top, _, bottom) = s.box
@@ -534,7 +549,7 @@ extension Copista {
         return Double(hit) / Double(yb - ya)
       }
       var best = 0.0
-      let from = max(away + 1, lo), to = min(W - away - 1, hi)
+      let from = max(away + 1, lo), to = min(W - away - 1, max(hi, laterStart(a, b)))
       if from <= to {
         for x in from...to {
           let r = run(x - 1, x + 2)
@@ -990,6 +1005,10 @@ extension Copista {
       for c in cand {
         if let last = clusters.last?.last, c.0 - last.0 <= sp { clusters[clusters.count - 1].append(c) } else { clusters.append([c]) }
       }
+      let heads = syms.filter { h -> Bool in
+        guard h.fam == "note" && h.p >= 0.5 else { return false }
+        return S.contains { st in st.y0 - 2 * sp <= h.cy && h.cy <= st.y1 + 2 * sp }
+      }
       var cuts: [Double] = []
       for cl in clusters {
         let lines = cl.filter { $0.2 == "line" }
@@ -1003,8 +1022,13 @@ extension Copista {
         let ok: Bool
         if n >= 2 {
           let inkCount = Double(ink.filter { $0 }.count)
-          ok = (Double(withLine.count) >= max(1, Double(n) / 2) && inkCount >= 0.75 * Double(n)) ||
-            Double(withLine.count) >= 0.75 * Double(n) || cl.contains { $0.2 == "ink" }
+          // a column of ink through every staff with nothing else to show for it can be stems that happen to line
+          // up, one per staff: a bar line never touches a note head
+          let inkOnly = cl.allSatisfy { $0.2 == "ink" }
+          let touches = heads.contains { h -> Bool in h.box.0 - 0.3 * sp <= x && x <= h.box.2 + 0.3 * sp }
+          let byInk = cl.contains { $0.2 == "ink" } && !(inkOnly && touches)
+          let byLines = Double(withLine.count) >= max(1, Double(n) / 2) && inkCount >= 0.75 * Double(n)
+          ok = byLines || Double(withLine.count) >= 0.75 * Double(n) || byInk
         } else {
           let edges = cl.filter { $0.2 == "edge" }
           ok = (ink[0] && (firm >= 0.5 || edges.count >= 2)) || firm >= 0.85
@@ -1025,6 +1049,9 @@ extension Copista {
       func empty(_ a: Double, _ b: Double) -> Bool { !music.contains { a <= $0.cx && $0.cx <= b } }
       while xs.count > 2 && empty(xs[xs.count - 2], xs[xs.count - 1]) { xs.remove(at: xs.count - 2) }
       while xs.count > 2 && empty(xs[0], xs[1]) { xs.remove(at: 1) }
+      // past the last bar line, a courtesy clef, key or meter for the next line: never a bar of its own, even when
+      // the detector reads a meter's C as a whole note
+      if xs.count > 2 && xs[xs.count - 1] - xs[xs.count - 2] < courtesyMaxSp * sp { xs.remove(at: xs.count - 2) }
       var k = 1
       while k < xs.count - 2 {
         let a = xs[k], b = xs[k + 1]

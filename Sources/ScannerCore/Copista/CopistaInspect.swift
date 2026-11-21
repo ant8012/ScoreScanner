@@ -39,6 +39,9 @@ public enum CopistaInspect {
     }
     try write("tok.json", tok)
     try Data(r.xml.utf8).write(to: output.appendingPathComponent("score.musicxml"))
+    // the page as the reader saw it (after straightening), for drawing the layout over it
+    try (Data("P5\n\(page.width) \(page.height)\n255\n".utf8) + Data(page.pixels))
+      .write(to: output.appendingPathComponent("page.pgm"))
     return "copista: \(r.detections.count) detections at \(r.imgsz), \(L.staves.count) staves, \(L.systems.count) systems, " +
       "\(r.reading.tok.count) symbols read in \(String(format: "%.2f", seconds))s (models loaded in " +
       "\(String(format: "%.2f", loaded.timeIntervalSince(start)))s)"

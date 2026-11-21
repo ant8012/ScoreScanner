@@ -48,8 +48,9 @@ First pages with guitar chord diagrams over the voice staff. Seen on 0.1.24/0.1.
 | --- | --- | --- |
 | Guitar chord grids boxed as words by the chord finder; the small names above them mostly missed | both songs: 8 of 19 and 21 of 35 chords | most chords missing |
 | A slash bass printed under the grid ("(C# Bass)") never read | both songs | wrong root in playback |
-| A tilted bottom system reads its three staves as two | second song, page 1 | voice and piano merged |
-| A curled first system not found in the app's PDF render (also in 0.1.24) | second song, page 2 | first system lost |
+| ~~A tilted bottom system reads its three staves as two~~ | second song, page 1 | fixed, not yet tagged (curled photos straightened) |
+| ~~A curled first system not found in the app's PDF render (also in 0.1.24)~~ | second song, page 2 | fixed, not yet tagged: 30 of 30 bars |
+| The outermost strip of a strongly curled page (the last 5% by the spine or edge) stays bent: a chord or note right at the edge can be missed | real-scan photos, Merry-Go-Round p2 | rare, left as is |
 | "Words and Music by X" gives the composer "Words and Music" | both songs | wrong credit |
 | "To Coda" read together with the chord name beside it | second song | no jump, junk text |
 | Verse labels ("1 & 4.") written as staff text | second song | stray text |
@@ -158,6 +159,18 @@ collect cases here until it is worth it.
 | Chords across bar lines (section 1) | see above |
 
 ## Fixed recently (for reference)
+
+Not yet tagged (Nov 20): phone photos of curled book pages. Pages past 1 degree of tilt were left crooked, so the
+staff finder lost bent systems and cut staves short. A page whose tilt changes by 3 degrees or more across it (a
+curled photo) is now straightened in six strips across as well as in bands down (`Copista.curled`); flat scans
+tilted evenly (Real Book pages at 1-2 degrees) stay untouched, since resampling them costs detections (a whole-bar
+rest lost on Autumn in New York, a blank title staff found on Black Nile). With it: an opening line hidden by a
+brace or the page-edge shadow is searched up to the later staff's start or first clef; three stems lined up
+through every staff no longer make a bar line; a sliver under 3 staff spaces after the last bar line (courtesy
+clef, key or meter) is not a bar. Regression vs 0.1.24: 843 identical, 14 changed, all phone photos and all
+checked against the printed bar numbers: Oh Very Young 28 -> 30 (true 30), Freezing Steel 19 (unchanged bars),
+Determination 36 -> 39, Spear of Justice 23 -> 28, Merry-Go-Round 34 -> 36, Sekai 39 -> 40, Date 34 -> 35, Lady
+page 11 5 -> 4 bars (all now equal to the page); Itomori loses 2 of 33 chords. All open in MuseScore.
 
 0.1.25 (Nov 20): a voice staff no longer splits off from its piano into a system of its own where three lyric lines
 widen the gap and the photo is cropped tight or curls (a thin stroke that one staff's lines start at counts as the
