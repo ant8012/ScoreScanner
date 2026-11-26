@@ -15,7 +15,7 @@ let package = Package(
         // Official Microsoft binary and Objective-C bindings, pinned in Vendor/onnxruntime/UPSTREAM.json.
         .binaryTarget(
             name: "onnxruntime",
-            url: "https://download.onnxruntime.ai/pod-archive-onnxruntime-c-1.27.0.zip",
+            url: "https://github.com/ant8012/aria/releases/download/deps/pod-archive-onnxruntime-c-1.27.0.zip",
             checksum: "8c74edd600eafc3055de9e8f7a9602afee44ed516913cb5e132bca02cc34622c"),
         .target(
             name: "OnnxRuntimeBindings",
